@@ -11,11 +11,21 @@ export type TicketStatus =
   | 'pending_approval'
   | 'in_queue'
   | 'in_progress'
+  | 'paused'
+  | 'waiting_client'
   | 'blocked_escalated'
   | 'completed'
   | 'cancelled';
 
 export type TicketPriority = 'urgente' | 'normal' | 'baixa';
+
+export type PauseCategory = 
+  | 'aguardando_cliente' 
+  | 'problema_tecnico' 
+  | 'aguardando_meta' 
+  | 'outro';
+
+export type NextActionBy = 'cliente' | 'guilherme' | 'caio';
 
 export interface Ticket {
   id: string;
@@ -37,6 +47,16 @@ export interface Ticket {
   total_time_seconds: number;
   created_at: string;
   completed_at?: string;
+  
+  // WhatsApp e Mapeamento
+  origin_whatsapp_group_id?: string;
+  origin_whatsapp_message_id?: string;
+
+  // Gestão de Pausa Estruturada
+  pause_reason?: string;
+  pause_category?: PauseCategory;
+  next_action_by?: NextActionBy;
+  paused_at?: string;
 }
 
 export interface ClientStats {
@@ -48,4 +68,24 @@ export interface ClientStats {
   completed_tickets: number;
   total_hours_spent: number;
   effective_hourly_rate: number;
+}
+
+export interface GroupMapping {
+  remote_jid: string;
+  group_name: string;
+  client_name: string;
+  creation?: number | null;
+  size?: number;
+  is_mapped?: boolean;
+}
+
+export interface SlaSettings {
+  id: string;
+  urgent_hours: number;
+  normal_hours: number;
+  low_hours: number;
+  work_start_hour: number;
+  work_end_hour: number;
+  work_days: string;
+  updated_at?: string;
 }

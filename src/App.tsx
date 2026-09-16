@@ -12,10 +12,16 @@ import {
   Check, 
   Flame, 
   Search,
-  Bot 
+  Bot,
+  Sliders,
+  Users2
 } from 'lucide-react';
-import { TeamMember, Ticket, TicketPriority } from './types';
+import { TeamMember, Ticket, TicketPriority, PauseCategory, NextActionBy } from './types';
 import { supabase } from './lib/supabase';
+import { PauseTaskModal } from './components/PauseTaskModal';
+import { ApproveTicketModal } from './components/ApproveTicketModal';
+import { GroupsTab } from './components/GroupsTab';
+import { SlaSettingsTab } from './components/SlaSettingsTab';
 
 // Mock inicial para funcionar de imediato mesmo sem banco conectado
 const INITIAL_MEMBERS: TeamMember[] = [
@@ -95,7 +101,7 @@ export function App() {
   });
 
   // Estado da UI
-  const [viewTab, setViewTab] = useState<'board' | 'telemetry'>('board');
+  const [viewTab, setViewTab] = useState<'board' | 'telemetry' | 'groups' | 'sla'>('board');
   const [searchTerm, setSearchTerm] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -103,6 +109,8 @@ export function App() {
   const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
   const [escalateTicketId, setEscalateTicketId] = useState<string | null>(null);
   const [escalateReason, setEscalateReason] = useState('');
+  const [ticketToPause, setTicketToPause] = useState<Ticket | null>(null);
+  const [ticketToApprove, setTicketToApprove] = useState<Ticket | null>(null);
 
   // Formulário de Nova Tarefa
   const [newTitle, setNewTitle] = useState('');
@@ -253,29 +261,61 @@ export function App() {
     );
   };
 
-  // 2. PAUSAR TIMER
-  const handlePauseTimer = () => {
-    if (!activeTicket) return;
+  // 2. PAUSAR TIMER (Abre modal obrigatório de motivo de pausa)
+  const handleOpenPauseModal = (ticket: Ticket) => {
+    setTicketToPause(ticket);
+  };
+
+  const handleConfirmPause = async (
+    ticketId: string,
+    reason: string,
+    category: PauseCategory,
+    nextAction: NextActionBy
+  ) => {
+    const isThisActive = ticketId === activeTicket?.id;
+    const finalSec = isThisActive ? activeSeconds : (tickets.find(t => t.id === ticketId)?.total_time_seconds || 0);
+
     setTickets(prev =>
       prev.map(t => {
-        if (t.id === activeTicket.id) {
+        if (t.id === ticketId) {
           return {
             ...t,
-            status: 'in_queue',
-            total_time_seconds: activeSeconds
+            status: 'paused',
+            pause_reason: reason,
+            pause_category: category,
+            next_action_by: nextAction,
+            paused_at: new Date().toISOString(),
+            total_time_seconds: finalSec
           };
         }
         return t;
       })
     );
+
+    // Salva no Supabase
+    try {
+      await supabase
+        .from('tenno_tickets')
+        .update({
+          status: 'paused',
+          pause_reason: reason,
+          pause_category: category,
+          next_action_by: nextAction,
+          paused_at: new Date().toISOString(),
+          total_time_seconds: finalSec
+        })
+        .eq('id', ticketId);
+    } catch (err) {
+      console.warn('Erro ao atualizar pausa no Supabase:', err);
+    }
   };
 
   // 3. CONCLUIR TAREFA
-  const handleCompleteTask = (ticketId: string) => {
+  const handleCompleteTask = async (ticketId: string) => {
+    const finalSec = ticketId === activeTicket?.id ? activeSeconds : (tickets.find(t => t.id === ticketId)?.total_time_seconds || 0);
     setTickets(prev =>
       prev.map(t => {
         if (t.id === ticketId) {
-          const finalSec = t.id === activeTicket?.id ? activeSeconds : t.total_time_seconds;
           return {
             ...t,
             status: 'completed',
@@ -286,15 +326,59 @@ export function App() {
         return t;
       })
     );
+
+    try {
+      await supabase
+        .from('tenno_tickets')
+        .update({
+          status: 'completed',
+          total_time_seconds: finalSec,
+          completed_at: new Date().toISOString()
+        })
+        .eq('id', ticketId);
+    } catch (err) {
+      console.warn('Erro ao concluir no Supabase:', err);
+    }
   };
 
-  // 4. APROVAR DEMANDA (1-Clique)
-  const handleApproveDemand = (ticketId: string, assignedToId: string = '2') => {
+  // 4. APROVAR DEMANDA COM CONFIRMAÇÃO & ENVIO WHATSAPP
+  const handleConfirmApproval = async (
+    ticketId: string,
+    assignedToId: string,
+    sendWhatsApp: boolean,
+    customMessage?: string
+  ) => {
     const targetMember = members.find(m => m.id === assignedToId) || members[1];
+    const ticket = tickets.find(t => t.id === ticketId);
+    if (!ticket) return;
+
+    const { hours, deadlineIso } = calculateDeadline(ticket.priority);
+
+    // Envio automático para o grupo se solicitado
+    if (sendWhatsApp && ticket.origin_whatsapp_group_id && customMessage) {
+      try {
+        const res = await fetch('/api/evolution-send-message', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            remote_jid: ticket.origin_whatsapp_group_id,
+            message_text: customMessage
+          })
+        });
+        if (res.ok) {
+          setScanFeedback(`✓ Notificação enviada com sucesso no grupo do cliente!`);
+        } else {
+          const err = await res.json();
+          alert(`Demanda aprovada, mas houve falha no envio WhatsApp: ${err.error || 'Erro'}`);
+        }
+      } catch (err: any) {
+        console.warn('Erro ao enviar mensagem no WhatsApp:', err);
+      }
+    }
+
     setTickets(prev =>
       prev.map(t => {
         if (t.id === ticketId) {
-          const { hours, deadlineIso } = calculateDeadline(t.priority);
           return {
             ...t,
             status: 'in_queue',
@@ -308,6 +392,22 @@ export function App() {
         return t;
       })
     );
+
+    try {
+      await supabase
+        .from('tenno_tickets')
+        .update({
+          status: 'in_queue',
+          assignee_id: targetMember.id,
+          assignee_name: targetMember.name,
+          sla_hours_target: hours,
+          sla_deadline: deadlineIso,
+          approved_at: new Date().toISOString()
+        })
+        .eq('id', ticketId);
+    } catch (err) {
+      console.warn('Erro ao aprovar no Supabase:', err);
+    }
   };
 
   // 5. ESCALAR PARA GUILHERME
@@ -521,7 +621,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                     {formatTimer(activeSeconds)}
                   </div>
                   <button
-                    onClick={handlePauseTimer}
+                    onClick={() => handleOpenPauseModal(activeTicket)}
                     className="p-1.5 rounded-lg bg-amber-500/20 border border-amber-500/30 text-amber-300 hover:bg-amber-500/30 transition text-xs flex items-center gap-1 font-semibold"
                     title="Pausar cronômetro"
                   >
@@ -550,7 +650,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
           </div>
 
           {/* Botões de Navegação & Ação */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             <div className="flex bg-slate-900 border border-slate-800 rounded-lg p-1 text-xs">
               <button
                 onClick={() => setViewTab('board')}
@@ -567,7 +667,25 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                 }`}
               >
                 <TrendingUp className="w-3.5 h-3.5" />
-                Telemetria & Horas
+                Telemetria
+              </button>
+              <button
+                onClick={() => setViewTab('groups')}
+                className={`px-3 py-1.5 rounded-md transition flex items-center gap-1.5 ${
+                  viewTab === 'groups' ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400'
+                }`}
+              >
+                <Users2 className="w-3.5 h-3.5" />
+                Grupos & Clientes
+              </button>
+              <button
+                onClick={() => setViewTab('sla')}
+                className={`px-3 py-1.5 rounded-md transition flex items-center gap-1.5 ${
+                  viewTab === 'sla' ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400'
+                }`}
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                SLA & Regras
               </button>
             </div>
 
@@ -609,7 +727,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
           </div>
         )}
 
-        {viewTab === 'board' ? (
+        {viewTab === 'board' && (
           <>
             {/* Barra de Filtro Rápido */}
             <div className="mb-6 flex items-center justify-between gap-4">
@@ -692,21 +810,13 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                         </div>
 
                         <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
-                          <span className="text-[11px] text-slate-500">Aprovar p/:</span>
-                          <div className="flex gap-1">
-                            <button
-                              onClick={() => handleApproveDemand(ticket.id, '2')}
-                              className="text-[11px] bg-purple-950/80 border border-purple-500/30 text-purple-300 hover:bg-purple-900 px-2.5 py-1 rounded font-semibold transition"
-                            >
-                              + Caio
-                            </button>
-                            <button
-                              onClick={() => handleApproveDemand(ticket.id, '1')}
-                              className="text-[11px] bg-blue-950/80 border border-blue-500/30 text-blue-300 hover:bg-blue-900 px-2.5 py-1 rounded font-semibold transition"
-                            >
-                              + Guilherme
-                            </button>
-                          </div>
+                          <button
+                            onClick={() => setTicketToApprove(ticket)}
+                            className="w-full text-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2 px-3 rounded-lg transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/10"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Aprovar & Notificar</span>
+                          </button>
                         </div>
                       </div>
                     ))
@@ -779,6 +889,23 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                             </h4>
                           </div>
 
+                          {/* Destaque de Demanda Pausada */}
+                          {ticket.status === 'paused' && ticket.pause_reason && (
+                            <div className="p-2.5 rounded-lg bg-amber-950/40 border border-amber-500/30 text-[11px] space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-amber-400">
+                                  {ticket.pause_category === 'aguardando_cliente' ? '🟡 Aguardando Cliente' :
+                                   ticket.pause_category === 'problema_tecnico' ? '🔴 Bloqueio Técnico' :
+                                   ticket.pause_category === 'aguardando_meta' ? '🔵 Aguardando Meta' : '⚪ Pausada'}
+                                </span>
+                                <span className="text-[10px] text-amber-300/90 bg-amber-900/50 px-1.5 py-0.5 rounded font-medium">
+                                  Bola com: {ticket.next_action_by === 'cliente' ? 'Cliente' : ticket.next_action_by === 'guilherme' ? 'Guilherme' : 'Caio'}
+                                </span>
+                              </div>
+                              <p className="text-amber-200/90 text-[11px] italic">"{ticket.pause_reason}"</p>
+                            </div>
+                          )}
+
                           <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1">
                             <span>
                               Tempo gasto:{' '}
@@ -811,11 +938,19 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                           <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
                             {isRunning ? (
                               <button
-                                onClick={handlePauseTimer}
+                                onClick={() => handleOpenPauseModal(ticket)}
                                 className="flex-1 bg-amber-500/20 border border-amber-500/40 text-amber-300 font-semibold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 hover:bg-amber-500/30 transition"
                               >
                                 <Pause className="w-3.5 h-3.5" />
                                 Pausar
+                              </button>
+                            ) : ticket.status === 'paused' ? (
+                              <button
+                                onClick={() => handleStartTimer(ticket.id, '2')}
+                                className="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition shadow-sm"
+                              >
+                                <Play className="w-3.5 h-3.5 fill-current" />
+                                Retomar Foco
                               </button>
                             ) : (
                               <button
@@ -913,6 +1048,23 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                             </h4>
                           </div>
 
+                          {/* Destaque de Demanda Pausada */}
+                          {ticket.status === 'paused' && ticket.pause_reason && (
+                            <div className="p-2.5 rounded-lg bg-amber-950/40 border border-amber-500/30 text-[11px] space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-amber-400">
+                                  {ticket.pause_category === 'aguardando_cliente' ? '🟡 Aguardando Cliente' :
+                                   ticket.pause_category === 'problema_tecnico' ? '🔴 Bloqueio Técnico' :
+                                   ticket.pause_category === 'aguardando_meta' ? '🔵 Aguardando Meta' : '⚪ Pausada'}
+                                </span>
+                                <span className="text-[10px] text-amber-300/90 bg-amber-900/50 px-1.5 py-0.5 rounded font-medium">
+                                  Bola com: {ticket.next_action_by === 'cliente' ? 'Cliente' : ticket.next_action_by === 'guilherme' ? 'Guilherme' : 'Caio'}
+                                </span>
+                              </div>
+                              <p className="text-amber-200/90 text-[11px] italic">"{ticket.pause_reason}"</p>
+                            </div>
+                          )}
+
                           <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1">
                             <span>
                               Tempo acumulado:{' '}
@@ -943,11 +1095,19 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                           <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
                             {isRunning ? (
                               <button
-                                onClick={handlePauseTimer}
+                                onClick={() => handleOpenPauseModal(ticket)}
                                 className="flex-1 bg-amber-500/20 border border-amber-500/40 text-amber-300 font-semibold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 hover:bg-amber-500/30 transition"
                               >
                                 <Pause className="w-3.5 h-3.5" />
                                 Pausar
+                              </button>
+                            ) : ticket.status === 'paused' ? (
+                              <button
+                                onClick={() => handleStartTimer(ticket.id, '1')}
+                                className="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition shadow-sm"
+                              >
+                                <Play className="w-3.5 h-3.5 fill-current" />
+                                Retomar Foco
                               </button>
                             ) : (
                               <button
@@ -1026,10 +1186,12 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
               </div>
             </div>
           </>
-        ) : (
-          /* ========================================================================= */
-          /* 3. ABA DE TELEMETRIA & HORAS (UNIVERSAL MULTI-CLIENTE) */
-          /* ========================================================================= */
+        )}
+
+        {/* ========================================================================= */}
+        {/* 2. ABA DE TELEMETRIA & HORAS (UNIVERSAL MULTI-CLIENTE) */}
+        {/* ========================================================================= */}
+        {viewTab === 'telemetry' && (
           <div className="space-y-6">
             {/* Cards de Resumo */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1120,6 +1282,12 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
             </div>
           </div>
         )}
+
+        {/* 3. ABA: GRUPOS WHATSAPP & MAPEAMENTO DE CLIENTES */}
+        {viewTab === 'groups' && <GroupsTab />}
+
+        {/* 4. ABA: CONFIGURAÇÕES DE SLA & REGRAS */}
+        {viewTab === 'sla' && <SlaSettingsTab />}
       </main>
 
       {/* ========================================================================= */}
@@ -1159,29 +1327,36 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 font-semibold mb-1">Prioridade / SLA:</label>
+                  <label className="block text-slate-400 font-semibold mb-1">
+                    Prioridade (SLA):
+                  </label>
                   <select
                     value={newPriority}
                     onChange={e => setNewPriority(e.target.value as TicketPriority)}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500"
                   >
-                    <option value="urgente">Urgente (Até 4h úteis)</option>
-                    <option value="normal">Normal (Até 24h úteis)</option>
-                    <option value="baixa">Baixa (Até 72h úteis)</option>
+                    <option value="urgente">Urgente (4h)</option>
+                    <option value="normal">Normal (24h)</option>
+                    <option value="baixa">Baixa (72h)</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-slate-400 font-semibold mb-1">Atribuir Inicialmente:</label>
+                  <label className="block text-slate-400 font-semibold mb-1">
+                    Responsável Inicial:
+                  </label>
                   <select
                     value={newAssignee}
                     onChange={e => setNewAssignee(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500"
                   >
-                    <option value="2">Caio (Suporte & Implantação)</option>
-                    <option value="1">Guilherme (Líder / Arquitetura)</option>
+                    {members.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} ({m.role === 'lider_tecnico' ? 'Técnico' : 'Operacional'})
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -1259,6 +1434,24 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
           </div>
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* 6. MODAIS ESTRUTURADOS: PAUSA OBRIGATÓRIA & APROVAÇÃO COM WHATSAPP */}
+      {/* ========================================================================= */}
+      <PauseTaskModal
+        isOpen={!!ticketToPause}
+        ticket={ticketToPause}
+        onClose={() => setTicketToPause(null)}
+        onConfirmPause={handleConfirmPause}
+      />
+
+      <ApproveTicketModal
+        isOpen={!!ticketToApprove}
+        ticket={ticketToApprove}
+        members={members}
+        onClose={() => setTicketToApprove(null)}
+        onConfirmApproval={handleConfirmApproval}
+      />
     </div>
   );
 }
