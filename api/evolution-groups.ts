@@ -68,7 +68,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         headers: {
           'Content-Type': 'application/json',
           'apikey': EVOLUTION_API_KEY
-        }
+        },
+        signal: AbortSignal.timeout(8000)
       });
 
       if (evoRes.ok) {
