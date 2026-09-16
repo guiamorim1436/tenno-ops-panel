@@ -14,7 +14,8 @@ import {
   Search,
   Bot,
   Sliders,
-  Users2
+  Users2,
+  FileText
 } from 'lucide-react';
 import { TeamMember, Ticket, TicketPriority, PauseCategory, NextActionBy } from './types';
 import { supabase } from './lib/supabase';
@@ -22,6 +23,7 @@ import { PauseTaskModal } from './components/PauseTaskModal';
 import { ApproveTicketModal } from './components/ApproveTicketModal';
 import { GroupsTab } from './components/GroupsTab';
 import { SlaSettingsTab } from './components/SlaSettingsTab';
+import { MarkdownExportTab } from './components/MarkdownExportTab';
 
 // Mock inicial para funcionar de imediato mesmo sem banco conectado
 const INITIAL_MEMBERS: TeamMember[] = [
@@ -101,7 +103,7 @@ export function App() {
   });
 
   // Estado da UI
-  const [viewTab, setViewTab] = useState<'board' | 'telemetry' | 'groups' | 'sla'>('board');
+  const [viewTab, setViewTab] = useState<'board' | 'telemetry' | 'groups' | 'sla' | 'markdown'>('board');
   const [searchTerm, setSearchTerm] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -686,6 +688,16 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
               >
                 <Sliders className="w-3.5 h-3.5" />
                 SLA & Regras
+              </button>
+              <button
+                onClick={() => setViewTab('markdown')}
+                className={`px-3 py-1.5 rounded-md transition flex items-center gap-1.5 ${
+                  viewTab === 'markdown' ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400'
+                }`}
+                title="Exportar tarefas organizadas em Markdown para o Obsidian"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Obsidian (.MD)
               </button>
             </div>
 
@@ -1288,6 +1300,9 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
 
         {/* 4. ABA: CONFIGURAÇÕES DE SLA & REGRAS */}
         {viewTab === 'sla' && <SlaSettingsTab />}
+
+        {/* 5. ABA: EXPORTAÇÃO OBSIDIAN (.MD) */}
+        {viewTab === 'markdown' && <MarkdownExportTab tickets={tickets} />}
       </main>
 
       {/* ========================================================================= */}

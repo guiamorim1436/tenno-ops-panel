@@ -109,28 +109,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           description: string;
           priority: 'normal' | 'urgente';
           suggested_role: 'lider_tecnico' | 'assistente_operacional';
+          is_followup?: boolean;
+          pause_reason?: string;
+          pause_category?: 'aguardando_cliente' | 'problema_tecnico' | 'aguardando_meta' | 'outro';
+          next_action_by?: 'cliente' | 'guilherme' | 'caio';
         }>;
       } = { has_pending_demands: false };
 
       if (OPENROUTER_API_KEY) {
         try {
           const systemPrompt = `Você é o Agente de Triagem Operacional da TENNO Automações.
-A sua missão é analisar um bloco de mensagens de um grupo de suporte no WhatsApp e decidir se existe alguma DEMANDA PENDENTE que precisa de ação da equipe técnica/operacional.
+A sua missão é analisar um bloco de mensagens de um grupo de suporte no WhatsApp e decidir se existe alguma DEMANDA PENDENTE ou ACOMPANHAMENTO que precisa de ação da equipe técnica/operacional.
 
 REGRAS OBRIGATÓRIAS:
-1. ANÁLISE DE RESOLUÇÃO: Se o cliente relatou uma dúvida, erro ou pedido, MAS alguém da [EQUIPE TENNO] (ou o próprio cliente) já respondeu, orientou ou resolveu na própria conversa, NÃO gere tarefa! Marque has_pending_demands = false.
+1. ANÁLISE DE RESOLUÇÃO: Se o cliente relatou uma dúvida, erro ou pedido, MAS alguém da [EQUIPE TENNO] (ou o próprio cliente) já respondeu, orientou ou resolveu na própria conversa, NÃO gere tarefa operacional! Marque has_pending_demands = false.
 2. CONVERSA SOCIAL: Bom dia, obrigado, valeu, áudios/mensagens de cortesia não são tarefas.
-3. DEMANDA PENDENTE: Apenas gere tarefa se o cliente solicitou algo que AINDA NÃO FOI RESOLVIDO e exige que a equipe altere código, crie automação, resolva bug no Kommo/n8n/webhook, etc.
-4. Responda EXCLUSIVAMENTE em formato JSON com este schema:
+3. DEMANDA PENDENTE: Gere tarefa se o cliente solicitou algo que AINDA NÃO FOI RESOLVIDO e exige que a equipe altere código, crie automação, resolva bug no Kommo/n8n/webhook, etc.
+4. TAREFA DE ACOMPANHAMENTO (FOLLOW-UP): Se a [EQUIPE TENNO] solicitou algo a um terceiro, gestor de tráfego ou cliente (ex: "me envia o acesso ao portfólio da Meta", "preciso do código que chegou no SMS", "aguardo aprovação"), e a conversa encerrou aguardando essa resposta do terceiro, ESSA TAREFA DEVE EXISTIR como acompanhamento!
+   - Defina is_followup: true
+   - title: "Acompanhar: [O que foi pedido]" (ex: "Acompanhar liberação de acesso ao portfólio Meta com gestor de tráfego")
+   - pause_category: "aguardando_cliente"
+   - next_action_by: "cliente"
+   - pause_reason: "Aguardando envio de acesso/informação solicitada pela equipe"
+5. Responda EXCLUSIVAMENTE em formato JSON com este schema:
 {
   "has_pending_demands": boolean,
   "reason": "explicação curta da sua decisão",
   "demands": [
     {
       "title": "título curto, claro e acionável (máx 80 caracteres)",
-      "description": "resumo do que o cliente pediu e o que precisa ser feito",
+      "description": "resumo do que foi pedido e o que precisa ser feito",
       "priority": "normal" | "urgente",
-      "suggested_role": "lider_tecnico" | "assistente_operacional"
+      "suggested_role": "lider_tecnico" | "assistente_operacional",
+      "is_followup": boolean,
+      "pause_reason": string | null,
+      "pause_category": "aguardando_cliente" | "problema_tecnico" | "aguardando_meta" | "outro" | null,
+      "next_action_by": "cliente" | "guilherme" | "caio" | null
     }
   ]
 }`;
@@ -213,7 +227,11 @@ REGRAS OBRIGATÓRIAS:
               priority: demand.priority,
               sla_hours_target: slaHours,
               assignee_id: assigneeId || null,
-              status: 'pending_approval'
+              status: demand.is_followup ? 'paused' : 'pending_approval',
+              pause_reason: demand.is_followup ? (demand.pause_reason || 'Aguardando ação de terceiro/cliente') : null,
+              pause_category: demand.is_followup ? (demand.pause_category || 'aguardando_cliente') : null,
+              next_action_by: demand.is_followup ? (demand.next_action_by || 'cliente') : null,
+              paused_at: demand.is_followup ? new Date().toISOString() : null
             });
 
           if (!ticketError) {

@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // Credenciais Evolution API
-const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://207.58.153.194:8080';
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'AZMy3DiXwaFMYdncdG76czamDRSyFkZA';
+const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-evolution-api.okgklo.easypanel.host';
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '429683C4C977415CAAFCCE10F7D57E11';
 const EVOLUTION_API_INSTANCE = process.env.EVOLUTION_API_INSTANCE || 'Guilherme';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
