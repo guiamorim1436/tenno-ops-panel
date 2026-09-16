@@ -15,6 +15,7 @@ import {
   Search 
 } from 'lucide-react';
 import { TeamMember, Ticket, TicketPriority } from './types';
+import { supabase } from './lib/supabase';
 
 // Mock inicial para funcionar de imediato mesmo sem banco conectado
 const INITIAL_MEMBERS: TeamMember[] = [
@@ -147,6 +148,21 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('tenno_tickets_v1', JSON.stringify(tickets));
   }, [tickets]);
+
+  // Sincronização automática com Supabase (quando as tabelas estiverem ativas)
+  useEffect(() => {
+    async function syncWithSupabase() {
+      try {
+        const { data, error } = await supabase.from('tenno_tickets').select('*');
+        if (!error && data && data.length > 0) {
+          setTickets(data);
+        }
+      } catch {
+        // Fallback silencioso para localStorage caso as tabelas ainda estejam em criação
+      }
+    }
+    syncWithSupabase();
+  }, []);
 
   // Formatação de Segundos para HH:MM:SS
   const formatTimer = (sec: number) => {
