@@ -36,7 +36,7 @@ const INITIAL_TICKETS: Ticket[] = [
     id: 't-1',
     ticket_code: 101,
     title: 'Erro no disparo de confirmação de agendamento via webhook',
-    client_name: 'Dr360 - Clínica OdontoVida',
+    client_name: 'Cliente Alpha',
     status: 'in_queue',
     priority: 'urgente',
     assignee_id: '1',
@@ -53,7 +53,7 @@ const INITIAL_TICKETS: Ticket[] = [
     id: 't-2',
     ticket_code: 102,
     title: 'Criar novos campos personalizados no Kommo e subir bot de boas-vindas',
-    client_name: 'Dr360 - Clínica BellaPele',
+    client_name: 'Cliente Beta',
     status: 'in_queue',
     priority: 'normal',
     assignee_id: '2',
@@ -83,7 +83,7 @@ const INITIAL_TICKETS: Ticket[] = [
     id: 't-4',
     ticket_code: 104,
     title: 'Paciente não recebe link do formulário anamnese no grupo',
-    client_name: 'Dr360 - Clínica SorrisoPrime',
+    client_name: 'Cliente Gamma',
     status: 'pending_approval',
     priority: 'urgente',
     sla_hours_target: 4,
@@ -116,7 +116,7 @@ export function App() {
 
   // Formulário de Nova Tarefa
   const [newTitle, setNewTitle] = useState('');
-  const [newClient, setNewClient] = useState('Dr360 - Clínica Nova');
+  const [newClient, setNewClient] = useState('');
   const [newPriority, setNewPriority] = useState<TicketPriority>('normal');
   const [newAssignee, setNewAssignee] = useState<string>('2');
 
@@ -451,7 +451,7 @@ export function App() {
       id: `t-${Date.now()}`,
       ticket_code: tickets.length + 101,
       title: newTitle.trim(),
-      client_name: newClient.trim(),
+      client_name: newClient.trim() || 'Cliente Geral',
       status: 'in_queue',
       priority: newPriority,
       assignee_id: assigned.id,
@@ -466,6 +466,7 @@ export function App() {
 
     setTickets(prev => [newTask, ...prev]);
     setNewTitle('');
+    setNewClient('');
     setIsNewTaskOpen(false);
   };
 
@@ -1322,7 +1323,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                   type="text"
                   value={newClient}
                   onChange={e => setNewClient(e.target.value)}
-                  placeholder="Ex: Dr360 - Clínica Sorriso, Cliente 3k..."
+                  placeholder="Ex: Nome da Empresa, Cliente Alpha..."
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
                   required
                 />

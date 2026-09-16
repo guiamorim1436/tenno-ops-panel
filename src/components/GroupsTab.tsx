@@ -103,7 +103,7 @@ export const GroupsTab: React.FC = () => {
             <h2 className="font-bold text-base text-white">Mapeamento de Grupos WhatsApp & Clientes</h2>
           </div>
           <p className="text-xs text-slate-400 max-w-3xl leading-relaxed">
-            Busca todos os grupos do seu WhatsApp através da Evolution API. Como um único cliente pode ter 2, 3 ou mais grupos (ex: filiais, grupos de suporte ou clínicas da Dr360), você pode escrever o mesmo <strong>Nome do Cliente</strong> em vários grupos para que os tickets e métricas sejam consolidados automaticamente!
+            Busca todos os grupos do seu WhatsApp através da Evolution API. Como um único cliente pode ter 2, 3 ou mais grupos (ex: filiais, grupos de suporte ou diferentes setores), você pode escrever o mesmo <strong>Nome do Cliente</strong> em vários grupos para que os tickets e métricas sejam consolidados automaticamente!
           </p>
         </div>
 
@@ -212,7 +212,7 @@ export const GroupsTab: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
-                      placeholder="Ex: Dr360, Farmácia Central, etc."
+                      placeholder="Ex: Nome da Empresa, Cliente Alpha, etc."
                       value={currentInput}
                       onChange={e =>
                         setClientNameInputs(prev => ({

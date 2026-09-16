@@ -1,6 +1,6 @@
 # 🎛️ TENNO Ops — Painel de Fila Única, SLA & Timer Mono-Tarefa
 
-Sistema Operacional desenhado especificamente para a rotina do **Guilherme** e do **Caio** na TENNO, eliminando o caos de 30-40 grupos de WhatsApp, impondo a execução mono-tarefa e fornecendo telemetria para a renegociação do contrato da Dr360.
+Sistema Operacional desenhado especificamente para a rotina do **Guilherme** e do **Caio** na TENNO, eliminando o caos de múltiplos grupos de WhatsApp, impondo a execução mono-tarefa e fornecendo telemetria para gestão de rentabilidade de todos os clientes.
 
 ---
 
