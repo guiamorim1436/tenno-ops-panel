@@ -92,8 +92,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const priority = isUrgent ? 'urgente' : 'normal';
     const slaHours = isUrgent ? 4 : 24;
-    // Se for técnico vai para o Guilherme ('1'), se for suporte/rotina vai para o Caio ('2')
-    const suggestedAssignee = isTechnical ? '1' : '2';
+    // Busca UUID do membro sugerido dinamicamente no banco
+    const targetRole = isTechnical ? 'lider_tecnico' : 'assistente_operacional';
+    const { data: memberRow } = await supabase
+      .from('tenno_team_members')
+      .select('id')
+      .eq('role', targetRole)
+      .limit(1)
+      .single();
+
+    const suggestedAssignee = memberRow?.id || null;
 
     // Cria título conciso (primeira frase ou até 90 caracteres)
     const cleanTitle = text.split('\n')[0].slice(0, 95);
