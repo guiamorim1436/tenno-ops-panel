@@ -36,8 +36,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const body = req.body;
 
     // Validação básica do payload da Evolution API
-    // Suporta tanto formato padrão messages.upsert quanto envio direto de mensagem
-    const event = body.event || body.type;
     const data = body.data || body;
 
     const key = data.key || {};
