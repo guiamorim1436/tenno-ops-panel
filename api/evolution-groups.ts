@@ -1,5 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { supabase } from './_supabase';
+
+// Credenciais Supabase
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://dwqmlzcwfpmjywhliket.supabase.co';
+const SUPABASE_SERVICE_ROLE_KEY = 
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR3cW1semN3ZnBtanl3aGxpa2V0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NDYxNzIyOCwiZXhwIjoyMDcwMTkzMjI4fQ.BlGV75Ns9joxay1j3cve2NbJaOr3_-k_YeKtcrf6ir4';
 
 // Credenciais Evolution API
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-evolution-api.okgklo.easypanel.host';
@@ -21,42 +25,68 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: 'remote_jid e client_name são obrigatórios' });
       }
 
-      const { data, error } = await supabase
-        .from('tenno_group_mappings')
-        .upsert(
-          {
-            remote_jid,
-            group_name: group_name || null,
-            client_name: client_name.trim(),
-            updated_at: new Date().toISOString()
-          },
-          { onConflict: 'remote_jid' }
-        )
-        .select()
-        .single();
+      const supaRes = await fetch(`${SUPABASE_URL}/rest/v1/tenno_group_mappings?on_conflict=remote_jid`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates,return=representation'
+        },
+        body: JSON.stringify({
+          remote_jid,
+          group_name: group_name || null,
+          client_name: client_name.trim(),
+          updated_at: new Date().toISOString()
+        })
+      });
 
-      if (error) {
-        console.error('Erro ao salvar mapeamento:', error);
-        return res.status(500).json({ error: error.message });
+      if (!supaRes.ok) {
+        const errText = await supaRes.text();
+        console.error('Erro ao salvar mapeamento:', supaRes.status, errText);
+        return res.status(500).json({ error: errText });
       }
 
-      // Atualiza também os tickets em aberto associados a esse grupo com o novo client_name
-      await supabase
-        .from('tenno_tickets')
-        .update({ client_name: client_name.trim() })
-        .eq('origin_whatsapp_group_id', remote_jid);
+      const data = await supaRes.json();
 
-      return res.status(200).json({ success: true, mapping: data });
+      // Atualiza também os tickets em aberto associados a esse grupo com o novo client_name
+      try {
+        await fetch(`${SUPABASE_URL}/rest/v1/tenno_tickets?origin_whatsapp_group_id=eq.${encodeURIComponent(remote_jid)}`, {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ client_name: client_name.trim() })
+        });
+      } catch (err) {
+        console.warn('Falha ao atualizar tickets legados:', err);
+      }
+
+      return res.status(200).json({ success: true, mapping: Array.isArray(data) ? data[0] : data });
     }
 
-    // 1. Busca mapeamentos já gravados no banco Supabase
-    const { data: mappings } = await supabase
-      .from('tenno_group_mappings')
-      .select('*')
-      .order('group_name', { ascending: true });
+    // GET: 1. Busca mapeamentos já gravados no banco Supabase
+    let mappings: any[] = [];
+    try {
+      const mRes = await fetch(`${SUPABASE_URL}/rest/v1/tenno_group_mappings?select=*&order=group_name.asc`, {
+        headers: {
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+        }
+      });
+      if (mRes.ok) {
+        mappings = await mRes.json();
+      }
+    } catch (dbErr) {
+      console.warn('Erro ao carregar do Supabase:', dbErr);
+    }
 
     const mappingsMap = new Map<string, { client_name: string; group_name: string }>();
-    mappings?.forEach(m => mappingsMap.set(m.remote_jid, { client_name: m.client_name, group_name: m.group_name }));
+    if (Array.isArray(mappings)) {
+      mappings.forEach(m => mappingsMap.set(m.remote_jid, { client_name: m.client_name, group_name: m.group_name }));
+    }
 
     // 2. Tenta buscar chats atualizados na Evolution API (rápido via findChats)
     let evoGroupsMap = new Map<string, string>();

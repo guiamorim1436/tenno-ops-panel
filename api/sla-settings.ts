@@ -1,5 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { supabase } from './_supabase';
+
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://dwqmlzcwfpmjywhliket.supabase.co';
+const SUPABASE_SERVICE_ROLE_KEY = 
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR3cW1semN3ZnBtanl3aGxpa2V0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NDYxNzIyOCwiZXhwIjoyMDcwMTkzMjI4fQ.BlGV75Ns9joxay1j3cve2NbJaOr3_-k_YeKtcrf6ir4';
 
 const DEFAULT_SLA = {
   id: 'default',
@@ -40,32 +43,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         updated_at: new Date().toISOString()
       };
 
-      const { data, error } = await supabase
-        .from('tenno_sla_settings')
-        .upsert(payload, { onConflict: 'id' })
-        .select()
-        .single();
+      const supaRes = await fetch(`${SUPABASE_URL}/rest/v1/tenno_sla_settings?on_conflict=id`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates,return=representation'
+        },
+        body: JSON.stringify(payload)
+      });
 
-      if (error) {
-        console.error('Erro ao atualizar SLA:', error);
-        return res.status(500).json({ error: error.message });
+      if (!supaRes.ok) {
+        const errText = await supaRes.text();
+        console.error('Erro ao atualizar SLA:', supaRes.status, errText);
+        return res.status(500).json({ error: errText });
       }
 
-      return res.status(200).json({ success: true, settings: data });
+      const data = await supaRes.json();
+      return res.status(200).json({ success: true, settings: Array.isArray(data) ? data[0] : data });
     }
 
     // GET
-    const { data, error } = await supabase
-      .from('tenno_sla_settings')
-      .select('*')
-      .eq('id', 'default')
-      .maybeSingle();
+    const supaRes = await fetch(`${SUPABASE_URL}/rest/v1/tenno_sla_settings?id=eq.default&select=*`, {
+      headers: {
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+      }
+    });
 
-    if (error || !data) {
+    if (!supaRes.ok) {
       return res.status(200).json({ success: true, settings: DEFAULT_SLA });
     }
 
-    return res.status(200).json({ success: true, settings: data });
+    const data = await supaRes.json();
+    if (Array.isArray(data) && data.length > 0) {
+      return res.status(200).json({ success: true, settings: data[0] });
+    }
+
+    return res.status(200).json({ success: true, settings: DEFAULT_SLA });
 
   } catch (error: any) {
     console.error('Erro em sla-settings:', error);
