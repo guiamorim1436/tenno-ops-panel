@@ -11,7 +11,8 @@ import {
   TrendingUp, 
   Check, 
   Flame, 
-  Search 
+  Search,
+  Bot 
 } from 'lucide-react';
 import { TeamMember, Ticket, TicketPriority } from './types';
 import { supabase } from './lib/supabase';
@@ -149,19 +150,45 @@ export function App() {
   }, [tickets]);
 
   // Sincronização automática com Supabase (quando as tabelas estiverem ativas)
-  useEffect(() => {
-    async function syncWithSupabase() {
-      try {
-        const { data, error } = await supabase.from('tenno_tickets').select('*');
-        if (!error && data && data.length > 0) {
-          setTickets(data);
-        }
-      } catch {
-        // Fallback silencioso para localStorage caso as tabelas ainda estejam em criação
+  const fetchTicketsFromDb = async () => {
+    try {
+      const { data, error } = await supabase.from('tenno_tickets').select('*').order('created_at', { ascending: false });
+      if (!error && data && data.length > 0) {
+        setTickets(data);
       }
+    } catch {
+      // Fallback silencioso para localStorage caso as tabelas ainda estejam em criação
     }
-    syncWithSupabase();
+  };
+
+  useEffect(() => {
+    fetchTicketsFromDb();
   }, []);
+
+  // Disparo manual do scanner de WhatsApp com IA
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanFeedback, setScanFeedback] = useState<string | null>(null);
+
+  const handleTriggerAiScan = async () => {
+    setIsScanning(true);
+    setScanFeedback(null);
+    try {
+      const res = await fetch('/api/scan-groups', { method: 'POST' });
+      const data = await res.json();
+      await fetchTicketsFromDb();
+
+      if (data.tickets_created > 0) {
+        setScanFeedback(`✨ ${data.tickets_created} nova(s) demanda(s) pendente(s) identificada(s) pela IA e adicionada(s) à Aprovação!`);
+      } else {
+        setScanFeedback(`✅ Varredura concluída: todas as conversas recentes já foram respondidas ou não possuem demandas pendentes.`);
+      }
+    } catch (err: any) {
+      setScanFeedback(`⚠️ Erro ao escanear: ${err.message || 'Falha na conexão'}`);
+    } finally {
+      setIsScanning(false);
+      setTimeout(() => setScanFeedback(null), 6000);
+    }
+  };
 
   // Formatação de Segundos para HH:MM:SS
   const formatTimer = (sec: number) => {
@@ -545,6 +572,16 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
             </div>
 
             <button
+              onClick={handleTriggerAiScan}
+              disabled={isScanning}
+              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition shadow-sm border border-indigo-500/40"
+              title="Acionar varredura de conversas do WhatsApp com a IA"
+            >
+              <Bot className={`w-4 h-4 ${isScanning ? 'animate-spin' : ''}`} />
+              <span>{isScanning ? 'Analisando...' : 'Escanear Grupos (IA)'}</span>
+            </button>
+
+            <button
               onClick={() => setIsNewTaskOpen(true)}
               className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition shadow-sm"
             >
@@ -559,6 +596,19 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
       {/* 2. CONTEÚDO PRINCIPAL (BOARD OU TELEMETRIA) */}
       {/* ========================================================================= */}
       <main className="flex-1 max-w-[1700px] w-full mx-auto p-6 flex flex-col">
+        {/* Banner de Feedback da IA */}
+        {scanFeedback && (
+          <div className="mb-4 px-4 py-3 rounded-lg bg-indigo-950/70 border border-indigo-500/50 text-indigo-200 text-xs flex items-center justify-between animate-fadeIn">
+            <span>{scanFeedback}</span>
+            <button 
+              onClick={() => setScanFeedback(null)}
+              className="text-slate-400 hover:text-white text-xs ml-4"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {viewTab === 'board' ? (
           <>
             {/* Barra de Filtro Rápido */}
