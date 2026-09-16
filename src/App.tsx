@@ -9,7 +9,6 @@ import {
   Plus, 
   Users, 
   TrendingUp, 
-  ShieldAlert, 
   Check, 
   Flame, 
   Search 
@@ -195,24 +194,31 @@ export function App() {
   };
 
   // 1. INICIAR TIMER (Mono-tarefa Obrigatória)
-  const handleStartTimer = (ticketId: string) => {
+  const handleStartTimer = (ticketId: string, forcedMemberId?: string) => {
+    const targetId = forcedMemberId || currentMemberId;
+    const targetMember = members.find(m => m.id === targetId) || currentMember;
+
+    if (targetId !== currentMemberId) {
+      setCurrentMemberId(targetId);
+    }
+
     setTickets(prev =>
       prev.map(t => {
         // Pausa qualquer tarefa anterior que estava 'in_progress' para esse membro
-        if (t.assignee_id === currentMemberId && t.status === 'in_progress' && t.id !== ticketId) {
+        if (t.assignee_id === targetId && t.status === 'in_progress' && t.id !== ticketId) {
           return {
             ...t,
             status: 'in_queue',
             total_time_seconds: t.id === activeTicket?.id ? activeSeconds : t.total_time_seconds
           };
         }
-        // Inicia o timer da nova tarefa selecionada
+        // Inicia o timer da nova tarefa selecionada garantindo o responsável correto
         if (t.id === ticketId) {
           return {
             ...t,
             status: 'in_progress',
-            assignee_id: currentMemberId,
-            assignee_name: currentMember.name
+            assignee_id: targetMember.id,
+            assignee_name: targetMember.name
           };
         }
         return t;
@@ -370,48 +376,50 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
     );
   }, [tickets, searchTerm]);
 
+  // Filtros de Colunas Estritamente Isolados
   const pendingApprovalTickets = filteredTickets.filter(t => t.status === 'pending_approval');
   const caioTickets = filteredTickets.filter(
-    t => t.assignee_id === '2' && (t.status === 'in_queue' || t.status === 'in_progress')
+    t => t.assignee_id === '2' && t.status !== 'pending_approval' && t.status !== 'completed'
   );
   const guilhermeTickets = filteredTickets.filter(
-    t => (t.assignee_id === '1' || t.is_escalated) && (t.status === 'in_queue' || t.status === 'in_progress' || t.status === 'blocked_escalated')
+    t => t.assignee_id === '1' && t.status !== 'pending_approval' && t.status !== 'completed'
   );
   const completedTickets = filteredTickets.filter(t => t.status === 'completed');
 
-  // Métricas para a Aba Dr360
-  const dr360Stats = useMemo(() => {
-    const map = new Map<string, { totalTickets: number; seconds: number }>();
-    let totalDr360Seconds = 0;
-    let totalDr360Tickets = 0;
+  // Telemetria Universal Multi-Cliente (Calculada dinamicamente para todos os clientes)
+  const clientStats = useMemo(() => {
+    const map = new Map<string, { totalTickets: number; completedTickets: number; seconds: number }>();
+    let totalSeconds = 0;
+    let totalTicketsCount = 0;
 
     tickets.forEach(t => {
-      if (t.client_name.includes('Dr360')) {
-        totalDr360Tickets++;
-        totalDr360Seconds += t.total_time_seconds;
-        const current = map.get(t.client_name) || { totalTickets: 0, seconds: 0 };
-        map.set(t.client_name, {
-          totalTickets: current.totalTickets + 1,
-          seconds: current.seconds + t.total_time_seconds
-        });
-      }
+      totalTicketsCount++;
+      totalSeconds += t.total_time_seconds || 0;
+      const client = t.client_name || 'Cliente Geral';
+      const current = map.get(client) || { totalTickets: 0, completedTickets: 0, seconds: 0 };
+      map.set(client, {
+        totalTickets: current.totalTickets + 1,
+        completedTickets: current.completedTickets + (t.status === 'completed' ? 1 : 0),
+        seconds: current.seconds + (t.total_time_seconds || 0)
+      });
     });
 
-    const clinics = Array.from(map.entries()).map(([name, data]) => ({
+    const clientsList = Array.from(map.entries()).map(([name, data]) => ({
       name,
       totalTickets: data.totalTickets,
+      completedTickets: data.completedTickets,
       hours: Number((data.seconds / 3600).toFixed(2)),
       formattedTime: formatHumanTime(data.seconds)
     }));
 
-    const totalHours = Number((totalDr360Seconds / 3600).toFixed(2));
-    const effectiveHourlyRate = totalHours > 0 ? (4000 / totalHours).toFixed(2) : '4000.00';
+    const totalHours = Number((totalSeconds / 3600).toFixed(2));
+    const avgMinutesPerTicket = totalTicketsCount > 0 ? Math.round((totalSeconds / totalTicketsCount) / 60) : 0;
 
     return {
-      clinics,
+      clientsList,
       totalHours,
-      totalDr360Tickets,
-      effectiveHourlyRate
+      totalTicketsCount,
+      avgMinutesPerTicket
     };
   }, [tickets]);
 
@@ -532,7 +540,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                 }`}
               >
                 <TrendingUp className="w-3.5 h-3.5" />
-                Dr360 & Horas
+                Telemetria & Horas
               </button>
             </div>
 
@@ -761,7 +769,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                               </button>
                             ) : (
                               <button
-                                onClick={() => handleStartTimer(ticket.id)}
+                                onClick={() => handleStartTimer(ticket.id, '2')}
                                 className="flex-1 bg-emerald-500 text-slate-950 font-bold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 hover:bg-emerald-400 transition shadow-sm"
                               >
                                 <Play className="w-3.5 h-3.5 fill-current" />
@@ -893,7 +901,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                               </button>
                             ) : (
                               <button
-                                onClick={() => handleStartTimer(ticket.id)}
+                                onClick={() => handleStartTimer(ticket.id, '1')}
                                 className="flex-1 bg-blue-600 text-white font-bold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 hover:bg-blue-500 transition shadow-sm"
                               >
                                 <Play className="w-3.5 h-3.5 fill-current" />
@@ -970,110 +978,90 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
           </>
         ) : (
           /* ========================================================================= */
-          /* 3. ABA DE TELEMETRIA & HORAS DA DR360 (ARMA DE RENEGOCIAÇÃO) */
+          /* 3. ABA DE TELEMETRIA & HORAS (UNIVERSAL MULTI-CLIENTE) */
           /* ========================================================================= */
           <div className="space-y-6">
             {/* Cards de Resumo */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
                 <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
-                  Contrato Dr360
-                </span>
-                <div className="text-2xl font-black text-white mt-1">R$ 4.000,00</div>
-                <span className="text-xs text-slate-500">Recorrente mensal fixo</span>
-              </div>
-
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
-                  Horas Totais Gastas
+                  Horas Totais Registradas
                 </span>
                 <div className="text-2xl font-black text-emerald-400 mt-1 font-mono">
-                  {dr360Stats.totalHours}h
+                  {clientStats.totalHours}h
                 </div>
-                <span className="text-xs text-slate-500">Registradas no cronômetro</span>
+                <span className="text-xs text-slate-500">Tempo acumulado de execução</span>
               </div>
 
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
                 <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
-                  Custo Efetivo por Hora
+                  Total de Demandas
+                </span>
+                <div className="text-2xl font-black text-white mt-1 font-mono">
+                  {clientStats.totalTicketsCount}
+                </div>
+                <span className="text-xs text-slate-500">Chamados no sistema</span>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
+                  Média por Demanda
                 </span>
                 <div className="text-2xl font-black text-amber-400 mt-1 font-mono">
-                  R$ {dr360Stats.effectiveHourlyRate}
+                  {clientStats.avgMinutesPerTicket} min
                 </div>
-                <span className="text-xs text-slate-500">Valor real recebido por hora</span>
+                <span className="text-xs text-slate-500">Tempo médio de resolução</span>
               </div>
 
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
                 <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
-                  Chamados Atendidos
+                  Clientes Atendidos
                 </span>
                 <div className="text-2xl font-black text-purple-400 mt-1 font-mono">
-                  {dr360Stats.totalDr360Tickets}
+                  {clientStats.clientsList.length}
                 </div>
-                <span className="text-xs text-slate-500">Demandas das clínicas no mês</span>
+                <span className="text-xs text-slate-500">Contas com demandas registradas</span>
               </div>
             </div>
 
-            {/* Alerta de Renegociação */}
-            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
-              <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-              <div className="text-xs text-amber-200 leading-relaxed">
-                <strong>Base Matemática para Renegociação com a Dr360:</strong> Se você atende 30 a 40
-                clínicas gastando em média 3 horas em cada, são{' '}
-                <strong className="underline">90 a 120 horas mensais</strong> por apenas R$ 4.000,00 (cerca
-                de R$ 33 a R$ 44 por hora técnica). Use a tabela abaixo como extrato de horas detalhado na
-                próxima reunião de alinhamento com a diretoria da Dr360.
-              </div>
-            </div>
-
-            {/* Tabela de Clínicas */}
+            {/* Tabela Universal de Clientes */}
             <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
                 <h3 className="font-bold text-sm text-white">
-                  Consumo Individual por Clínica (Dr360)
+                  Consumo de Horas e Demandas por Cliente
                 </h3>
                 <span className="text-xs text-slate-400">
-                  Total de {dr360Stats.clinics.length} clínicas registradas
+                  {clientStats.clientsList.length} contas monitoradas
                 </span>
               </div>
 
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-950/60 text-slate-400 font-semibold border-b border-slate-800">
                   <tr>
-                    <th className="px-6 py-3">Clínica</th>
-                    <th className="px-6 py-3">Demandas no Mês</th>
+                    <th className="px-6 py-3">Cliente / Conta</th>
+                    <th className="px-6 py-3">Total de Chamados</th>
+                    <th className="px-6 py-3">Chamados Concluídos</th>
                     <th className="px-6 py-3">Tempo Total Gasto</th>
                     <th className="px-6 py-3">Horas Decimais</th>
-                    <th className="px-6 py-3">Status de Limite</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800 text-slate-300">
-                  {dr360Stats.clinics.length === 0 ? (
+                  {clientStats.clientsList.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="px-6 py-8 text-center text-slate-500">
-                        Nenhuma clínica Dr360 com chamados registrados ainda.
+                        Nenhum cliente com tempo registrado ainda. Inicie o cronômetro em uma tarefa para registrar.
                       </td>
                     </tr>
                   ) : (
-                    dr360Stats.clinics.map((c, i) => (
+                    clientStats.clientsList.map((c, i) => (
                       <tr key={i} className="hover:bg-slate-800/40 transition">
                         <td className="px-6 py-3 font-medium text-white">{c.name}</td>
                         <td className="px-6 py-3 font-mono">{c.totalTickets} chamados</td>
+                        <td className="px-6 py-3 font-mono text-emerald-400">{c.completedTickets} concluídos</td>
                         <td className="px-6 py-3 font-mono font-semibold text-emerald-400">
                           {c.formattedTime}
                         </td>
-                        <td className="px-6 py-3 font-mono">{c.hours}h</td>
-                        <td className="px-6 py-3">
-                          {c.hours >= 3.0 ? (
-                            <span className="bg-rose-500/20 text-rose-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
-                              Estourou 3h
-                            </span>
-                          ) : (
-                            <span className="bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
-                              Dentro do padrão
-                            </span>
-                          )}
-                        </td>
+                        <td className="px-6 py-3 font-mono font-semibold">{c.hours}h</td>
                       </tr>
                     ))
                   )}
