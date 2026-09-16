@@ -58,65 +58,64 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ success: true, mapping: data });
     }
 
-    // GET: Buscar grupos na Evolution API e cruzar com mapeamentos existentes
-    const evoUrl = `${EVOLUTION_API_URL.replace(/\/$/, '')}/group/fetchAllGroups/${EVOLUTION_API_INSTANCE}?getParticipants=false`;
+    // 1. Busca mapeamentos já gravados no banco Supabase
+    const { data: mappings } = await supabase
+      .from('tenno_group_mappings')
+      .select('*')
+      .order('group_name', { ascending: true });
 
-    let evoGroups: any[] = [];
+    const mappingsMap = new Map<string, { client_name: string; group_name: string }>();
+    mappings?.forEach(m => mappingsMap.set(m.remote_jid, { client_name: m.client_name, group_name: m.group_name }));
+
+    // 2. Tenta buscar chats atualizados na Evolution API (rápido via findChats)
+    let evoGroupsMap = new Map<string, string>();
     try {
+      const evoUrl = `${EVOLUTION_API_URL.replace(/\/$/, '')}/chat/findChats/${EVOLUTION_API_INSTANCE}`;
       const evoRes = await fetch(evoUrl, {
-        method: 'GET',
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'apikey': EVOLUTION_API_KEY
         },
-        signal: AbortSignal.timeout(8000)
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(5000)
       });
 
       if (evoRes.ok) {
-        const evoData = await evoRes.json();
-        evoGroups = Array.isArray(evoData) ? evoData : (evoData.groups || evoData.data || []);
-      } else {
-        console.warn('Evolution API retornou status não-200:', evoRes.status, await evoRes.text());
+        const chats = await evoRes.json();
+        if (Array.isArray(chats)) {
+          chats
+            .filter((c: any) => (c.remoteJid || c.id || '').endsWith('@g.us'))
+            .forEach((c: any) => {
+              const jid = c.remoteJid || c.id;
+              const name = c.pushName || c.name || 'Grupo sem nome';
+              evoGroupsMap.set(jid, name);
+            });
+        }
       }
     } catch (evoErr) {
-      console.warn('Falha na requisição para Evolution API:', evoErr);
+      console.warn('Evolution API indisponível ou lenta, usando dados do Supabase:', evoErr);
     }
 
-    // Busca mapeamentos já gravados no banco
-    const { data: mappings } = await supabase
-      .from('tenno_group_mappings')
-      .select('*');
+    // 3. Mescla os grupos do Supabase com os grupos detectados na Evolution API
+    const allJids = new Set<string>([
+      ...Array.from(mappingsMap.keys()),
+      ...Array.from(evoGroupsMap.keys())
+    ]);
 
-    const mappingsMap = new Map<string, string>();
-    mappings?.forEach(m => mappingsMap.set(m.remote_jid, m.client_name));
+    const formattedGroups = Array.from(allJids).map(jid => {
+      const saved = mappingsMap.get(jid);
+      const evoName = evoGroupsMap.get(jid);
+      const groupName = evoName || saved?.group_name || jid;
+      const clientName = saved?.client_name || '';
 
-    // Formata os grupos
-    const formattedGroups = evoGroups.map((g: any) => {
-      const jid = g.id || g.jid || '';
-      const subject = g.subject || g.name || 'Grupo Sem Nome';
       return {
         remote_jid: jid,
-        group_name: subject,
-        client_name: mappingsMap.get(jid) || '',
-        creation: g.creation || null,
-        size: g.size || g.participants?.length || 0,
-        is_mapped: mappingsMap.has(jid)
+        group_name: groupName,
+        client_name: clientName,
+        is_mapped: !!clientName.trim()
       };
-    });
-
-    // Se a Evolution API estiver offline ou vazia, inclui pelo menos os grupos já mapeados
-    if (formattedGroups.length === 0 && mappings && mappings.length > 0) {
-      mappings.forEach(m => {
-        formattedGroups.push({
-          remote_jid: m.remote_jid,
-          group_name: m.group_name || m.remote_jid,
-          client_name: m.client_name,
-          creation: null,
-          size: 0,
-          is_mapped: true
-        });
-      });
-    }
+    }).sort((a, b) => a.group_name.localeCompare(b.group_name));
 
     return res.status(200).json({
       success: true,

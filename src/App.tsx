@@ -984,6 +984,16 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                               <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
                               <span className="hidden sm:inline">Escalar</span>
                             </button>
+
+                            {/* Botão de Conclusão */}
+                            <button
+                              onClick={() => handleCompleteTask(ticket.id)}
+                              className="bg-emerald-500/20 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 font-bold px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition border border-emerald-500/30"
+                              title="Concluir demanda"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Concluir</span>
+                            </button>
                           </div>
                         </div>
                       );
@@ -1134,9 +1144,11 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
 
                             <button
                               onClick={() => handleCompleteTask(ticket.id)}
-                              className="bg-emerald-500/20 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs transition"
+                              className="bg-emerald-500/20 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 font-bold px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition border border-emerald-500/30"
+                              title="Concluir demanda"
                             >
-                              Concluir
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Concluir</span>
                             </button>
                           </div>
                         </div>
