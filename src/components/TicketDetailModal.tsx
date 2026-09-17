@@ -13,7 +13,8 @@ import {
   Save, 
   Send,
   Check,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Calendar
 } from 'lucide-react';
 import { Ticket } from '../types';
 import { supabase } from '../lib/supabase';
@@ -27,6 +28,8 @@ interface TicketDetailModalProps {
   onReject?: (ticketId: string, reason: string) => void;
   onTransfer?: (ticket: Ticket) => void;
   onUpdateTicket?: (updatedTicket: Ticket) => void;
+  onNotifyWhatsApp?: (ticket: Ticket) => void;
+  onAddToCalendar?: (ticket: Ticket) => void;
 }
 
 export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
@@ -37,7 +40,9 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
   onApprove,
   onReject,
   onTransfer,
-  onUpdateTicket
+  onUpdateTicket,
+  onNotifyWhatsApp,
+  onAddToCalendar
 }) => {
   const [showRejectForm, setShowRejectForm] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
@@ -334,7 +339,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
           </div>
 
           {/* Grid de Metadados */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {/* Cliente */}
             <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
               <div className="flex items-center gap-1.5 mb-1">
@@ -343,7 +348,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                   Cliente Vinculado
                 </span>
               </div>
-              <p className="text-xs font-semibold text-emerald-400">
+              <p className="text-xs font-semibold text-emerald-400 truncate">
                 {ticket.client_name || 'Não definido'}
               </p>
             </div>
@@ -359,6 +364,27 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full uppercase ${prio.bg} ${prio.text} border ${prio.border}`}>
                 {ticket.priority}
               </span>
+            </div>
+
+            {/* Prazo Oficial SLA */}
+            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3 col-span-2 sm:col-span-1">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Clock className="w-3 h-3 text-amber-400" />
+                <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">
+                  Prazo Oficial (SLA)
+                </span>
+              </div>
+              <p className="text-xs font-bold text-amber-300">
+                {ticket.sla_deadline
+                  ? new Date(ticket.sla_deadline).toLocaleDateString('pt-BR', {
+                      weekday: 'short',
+                      day: '2-digit',
+                      month: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })
+                  : 'Sem prazo registrado'}
+              </p>
             </div>
 
             {/* Data de Criação */}
@@ -382,7 +408,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               </div>
               <p className="text-xs text-slate-300">
                 {ticket.origin_whatsapp_group_id
-                  ? `WhatsApp (${ticket.origin_whatsapp_group_id.slice(0, 18)}...)`
+                  ? `WhatsApp (${ticket.origin_whatsapp_group_id.slice(0, 14)}...)`
                   : 'Criação manual'}
               </p>
             </div>
@@ -440,24 +466,54 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                 className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition shadow-lg shadow-emerald-500/20 flex items-center gap-2"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                Aprovar & Notificar
+                Aprovar Demanda
               </button>
             </>
           ) : (
-            <div className="flex items-center justify-between w-full">
-              {ticket.status !== 'completed' && ticket.status !== 'rejected' && onTransfer && (
-                <button
-                  onClick={() => {
-                    onClose();
-                    onTransfer(ticket);
-                  }}
-                  className="px-4 py-2 rounded-xl bg-indigo-500/20 hover:bg-indigo-500 text-indigo-300 hover:text-white border border-indigo-500/30 text-xs font-semibold transition flex items-center gap-1.5"
-                  title="Transferir esta tarefa para outro membro da equipe"
-                >
-                  <ArrowRightLeft className="w-3.5 h-3.5" />
-                  <span>Transferir Demanda</span>
-                </button>
-              )}
+            <div className="flex items-center justify-between w-full flex-wrap gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {ticket.status !== 'completed' && ticket.status !== 'rejected' && onTransfer && (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      onTransfer(ticket);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-indigo-500/20 hover:bg-indigo-500 text-indigo-300 hover:text-white border border-indigo-500/30 text-xs font-semibold transition flex items-center gap-1.5"
+                    title="Transferir esta tarefa para outro membro da equipe"
+                  >
+                    <ArrowRightLeft className="w-3.5 h-3.5" />
+                    <span>Transferir</span>
+                  </button>
+                )}
+
+                {onNotifyWhatsApp && ticket.status !== 'pending_approval' && ticket.status !== 'rejected' && (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      onNotifyWhatsApp(ticket);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border border-emerald-500/30 text-xs font-semibold transition flex items-center gap-1.5"
+                    title="Enviar notificação oficial com prazo para o grupo do cliente"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Notificar WhatsApp</span>
+                  </button>
+                )}
+
+                {onAddToCalendar && ticket.status !== 'completed' && ticket.status !== 'rejected' && (
+                  <button
+                    onClick={() => {
+                      onAddToCalendar(ticket);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-blue-500/20 hover:bg-blue-500 text-blue-300 hover:text-white border border-blue-500/30 text-xs font-semibold transition flex items-center gap-1.5"
+                    title="Adicionar bloco de 1h na Google Agenda"
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>Google Agenda (1h)</span>
+                  </button>
+                )}
+              </div>
+
               <div className="flex items-center gap-2 ml-auto">
                 <button
                   onClick={onClose}

@@ -21,7 +21,8 @@ import {
   RotateCcw, 
   LogOut, 
   Send,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Calendar
 } from 'lucide-react';
 import { 
   TeamMember, 
@@ -40,6 +41,9 @@ import { PauseTaskModal } from './components/PauseTaskModal';
 import { ApproveTicketModal } from './components/ApproveTicketModal';
 import { TicketDetailModal } from './components/TicketDetailModal';
 import { TransferTicketModal } from './components/TransferTicketModal';
+import { SendWhatsAppModal } from './components/SendWhatsAppModal';
+import { CalendarSyncModal } from './components/CalendarSyncModal';
+import { createGoogleCalendarUrl } from './lib/googleCalendar';
 import { GroupsTab } from './components/GroupsTab';
 import { SlaSettingsTab } from './components/SlaSettingsTab';
 import { MarkdownExportTab } from './components/MarkdownExportTab';
@@ -168,6 +172,8 @@ export function App() {
   const [ticketToApprove, setTicketToApprove] = useState<Ticket | null>(null);
   const [ticketToDetail, setTicketToDetail] = useState<Ticket | null>(null);
   const [ticketToTransfer, setTicketToTransfer] = useState<Ticket | null>(null);
+  const [ticketToNotifyWhatsApp, setTicketToNotifyWhatsApp] = useState<Ticket | null>(null);
+  const [showCalendarSyncModal, setShowCalendarSyncModal] = useState<boolean>(false);
 
   // Formulário de Nova Tarefa
   const [newTitle, setNewTitle] = useState('');
@@ -441,19 +447,36 @@ export function App() {
     });
   };
 
-  // 1. INICIAR TIMER (Mono-tarefa Obrigatória)
-  const handleStartTimer = (ticketId: string, forcedMemberId?: string) => {
-    const targetId = forcedMemberId || currentMemberId;
-    const targetMember = members.find(m => m.id === targetId) || currentMember;
+  // Adiciona evento de 1h diretamente na Google Agenda
+  const handleAddToGoogleCalendar = (ticket: Ticket) => {
+    const gcalUrl = createGoogleCalendarUrl({
+      title: ticket.title,
+      description: ticket.description,
+      clientName: ticket.client_name,
+      ticketCode: ticket.ticket_code,
+      startDate: new Date(),
+      durationHours: 1
+    });
+    window.open(gcalUrl, '_blank', 'noopener,noreferrer');
+  };
 
-    if (targetId !== currentMemberId) {
-      setCurrentMemberId(targetId);
+  // 1. INICIAR TIMER (Mono-tarefa Obrigatória com integração Google Agenda)
+  const handleStartTimer = async (ticketId: string, forcedMemberId?: string, openGoogleCalendar: boolean = true) => {
+    const rawTargetId = forcedMemberId || currentMemberId;
+    const isTargetGui = isGuilherme(rawTargetId);
+    const targetUuid = isTargetGui ? GUILHERME_UUID : CAIO_UUID;
+    const targetName = isTargetGui ? 'Guilherme' : 'Caio';
+
+    if (targetUuid !== currentMemberId) {
+      setCurrentMemberId(targetUuid);
     }
+
+    const clickedTicket = tickets.find(t => t.id === ticketId);
 
     setTickets(prev =>
       prev.map(t => {
         // Pausa qualquer tarefa anterior que estava 'in_progress' para esse membro
-        if (t.assignee_id === targetId && t.status === 'in_progress' && t.id !== ticketId) {
+        if ((t.assignee_id === targetUuid || (isTargetGui && isGuilherme(t.assignee_id, t.assignee_name))) && t.status === 'in_progress' && t.id !== ticketId) {
           return {
             ...t,
             status: 'in_queue',
@@ -465,13 +488,31 @@ export function App() {
           return {
             ...t,
             status: 'in_progress',
-            assignee_id: targetMember.id,
-            assignee_name: targetMember.name
+            assignee_id: targetUuid,
+            assignee_name: targetName
           };
         }
         return t;
       })
     );
+
+    // Persiste status 'in_progress' no Supabase
+    try {
+      await supabase
+        .from('tenno_tickets')
+        .update({
+          status: 'in_progress',
+          assignee_id: targetUuid
+        })
+        .eq('id', ticketId);
+    } catch (err) {
+      console.warn('Erro ao atualizar status in_progress no Supabase:', err);
+    }
+
+    // Se habilitado e for ticket válido, abre Google Agenda para salvar o bloco de 1h
+    if (openGoogleCalendar && clickedTicket) {
+      handleAddToGoogleCalendar(clickedTicket);
+    }
   };
 
   // 2. PAUSAR TIMER (Abre modal obrigatório de motivo de pausa)
@@ -636,7 +677,8 @@ export function App() {
   const handleTransferTicket = async (
     ticketId: string,
     targetMemberId: string,
-    reason?: string
+    reason?: string,
+    newDeadlineIso?: string
   ) => {
     const isTargetGui = isGuilherme(targetMemberId);
     const resolvedTargetUuid = isTargetGui ? GUILHERME_UUID : CAIO_UUID;
@@ -674,7 +716,8 @@ export function App() {
             assignee_name: resolvedTargetName,
             description: updatedDesc,
             is_escalated: false,
-            status: nextStatus
+            status: nextStatus,
+            ...(newDeadlineIso ? { sla_deadline: newDeadlineIso } : {})
           };
         }
         return t;
@@ -690,6 +733,9 @@ export function App() {
       if (reason) {
         updatePayload.description = updatedDesc;
       }
+      if (newDeadlineIso) {
+        updatePayload.sla_deadline = newDeadlineIso;
+      }
 
       const { error } = await supabase
         .from('tenno_tickets')
@@ -699,7 +745,7 @@ export function App() {
       if (error) {
         console.error('Erro ao transferir no Supabase:', error);
       } else {
-        setScanFeedback(`✨ Demanda transferida com sucesso para ${resolvedTargetName}!`);
+        setScanFeedback(`✨ Demanda transferida com sucesso para ${resolvedTargetName}${newDeadlineIso ? ' com prazo sincronizado com a agenda' : ''}!`);
         setTimeout(() => setScanFeedback(null), 4000);
       }
     } catch (err) {
@@ -1171,6 +1217,15 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
             </button>
 
             <button
+              onClick={() => setShowCalendarSyncModal(true)}
+              className="bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 transition border border-slate-800 hover:border-blue-500/40 shadow-sm"
+              title="Sincronizar demandas com o Google Agenda via link iCal ou Web"
+            >
+              <Calendar className="w-3.5 h-3.5 text-blue-400" />
+              <span className="hidden sm:inline">Google Agenda</span>
+            </button>
+
+            <button
               onClick={() => setIsNewTaskOpen(true)}
               className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition shadow-sm"
             >
@@ -1352,14 +1407,22 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                             <span className="text-xs font-mono text-slate-400 font-bold">
                               #{ticket.ticket_code}
                             </span>
-                            <div className="flex items-center gap-1.5">
-                              {ticket.sla_deadline && (
+                            <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                              {ticket.sla_deadline ? (
                                 <span 
-                                  className="text-[10px] text-slate-400 flex items-center gap-1 bg-slate-800/60 px-2 py-0.5 rounded"
+                                  className="text-[10px] font-bold text-amber-300 flex items-center gap-1 bg-amber-950/60 border border-amber-500/40 px-2 py-0.5 rounded shadow-sm"
                                   title={`Prazo útil projetado: ${new Date(ticket.sla_deadline).toLocaleString('pt-BR')}`}
                                 >
                                   <Clock className="w-3 h-3 text-amber-400" />
-                                  {formatSlaBadge(ticket.sla_deadline)}
+                                  <span>Prazo: {formatSlaBadge(ticket.sla_deadline)}</span>
+                                </span>
+                              ) : (
+                                <span 
+                                  className="text-[10px] text-slate-500 flex items-center gap-1 bg-slate-800/40 px-1.5 py-0.5 rounded"
+                                  title="Sem prazo de SLA registrado"
+                                >
+                                  <Clock className="w-3 h-3 text-slate-500" />
+                                  <span>Sem prazo</span>
                                 </span>
                               )}
                               <span
@@ -1402,7 +1465,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                             </div>
                           )}
 
-                          <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1">
+                          <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 flex-wrap gap-1.5">
                             <span>
                               Tempo gasto:{' '}
                               <strong className="text-white font-mono">
@@ -1411,18 +1474,26 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                                 )}
                               </strong>
                             </span>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5">
                               <button
                                 onClick={() => setTicketToDetail(ticket)}
-                                className="text-[11px] text-slate-400 hover:text-sky-400 flex items-center gap-1 transition"
+                                className="text-[11px] text-slate-400 hover:text-sky-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-800"
                                 title="Ver detalhes completos e adicionar comentários de contexto"
                               >
                                 <Eye className="w-3 h-3" />
                                 <span>Detalhes</span>
                               </button>
                               <button
+                                onClick={() => setTicketToNotifyWhatsApp(ticket)}
+                                className="text-[11px] text-slate-300 hover:text-emerald-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded bg-emerald-950/30 border border-emerald-500/30 hover:bg-emerald-900/40"
+                                title="Enviar ou formatar notificação oficial com prazo para o WhatsApp do cliente"
+                              >
+                                <Send className="w-3 h-3 text-emerald-400" />
+                                <span>Notificar</span>
+                              </button>
+                              <button
                                 onClick={() => copyWhatsAppMessage(ticket)}
-                                className="text-[11px] text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition"
+                                className="text-[11px] text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-800"
                                 title="Copiar mensagem formatada para WhatsApp"
                               >
                                 {copiedId === ticket.id ? (
@@ -1433,9 +1504,17 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                                 ) : (
                                   <>
                                     <Copy className="w-3 h-3" />
-                                    <span>WhatsApp</span>
+                                    <span>Copiar</span>
                                   </>
                                 )}
+                              </button>
+                              <button
+                                onClick={() => handleAddToGoogleCalendar(ticket)}
+                                className="text-[11px] text-slate-400 hover:text-blue-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-800"
+                                title="Adicionar bloco de 1h na Google Agenda"
+                              >
+                                <Calendar className="w-3 h-3 text-blue-400" />
+                                <span>Agenda</span>
                               </button>
                             </div>
                           </div>
@@ -1452,7 +1531,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                               </button>
                             ) : ticket.status === 'paused' ? (
                               <button
-                                onClick={() => handleStartTimer(ticket.id, '2')}
+                                onClick={() => handleStartTimer(ticket.id, CAIO_UUID)}
                                 className="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition shadow-sm"
                               >
                                 <Play className="w-3.5 h-3.5 fill-current" />
@@ -1460,7 +1539,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                               </button>
                             ) : (
                               <button
-                                onClick={() => handleStartTimer(ticket.id, '2')}
+                                onClick={() => handleStartTimer(ticket.id, CAIO_UUID)}
                                 className="flex-1 bg-emerald-500 text-slate-950 font-bold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 hover:bg-emerald-400 transition shadow-sm"
                               >
                                 <Play className="w-3.5 h-3.5 fill-current" />
@@ -1554,14 +1633,22 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                             <span className="text-xs font-mono text-slate-400 font-bold">
                               #{ticket.ticket_code}
                             </span>
-                            <div className="flex items-center gap-1.5">
-                              {ticket.sla_deadline && (
+                            <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                              {ticket.sla_deadline ? (
                                 <span 
-                                  className="text-[10px] text-slate-400 flex items-center gap-1 bg-slate-800/60 px-2 py-0.5 rounded"
+                                  className="text-[10px] font-bold text-amber-300 flex items-center gap-1 bg-amber-950/60 border border-amber-500/40 px-2 py-0.5 rounded shadow-sm"
                                   title={`Prazo útil projetado: ${new Date(ticket.sla_deadline).toLocaleString('pt-BR')}`}
                                 >
                                   <Clock className="w-3 h-3 text-amber-400" />
-                                  {formatSlaBadge(ticket.sla_deadline)}
+                                  <span>Prazo: {formatSlaBadge(ticket.sla_deadline)}</span>
+                                </span>
+                              ) : (
+                                <span 
+                                  className="text-[10px] text-slate-500 flex items-center gap-1 bg-slate-800/40 px-1.5 py-0.5 rounded"
+                                  title="Sem prazo de SLA registrado"
+                                >
+                                  <Clock className="w-3 h-3 text-slate-500" />
+                                  <span>Sem prazo</span>
                                 </span>
                               )}
                               <span
@@ -1604,7 +1691,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                             </div>
                           )}
 
-                          <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1">
+                          <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 flex-wrap gap-1.5">
                             <span>
                               Tempo acumulado:{' '}
                               <strong className="text-white font-mono">
@@ -1613,18 +1700,26 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                                 )}
                               </strong>
                             </span>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5">
                               <button
                                 onClick={() => setTicketToDetail(ticket)}
-                                className="text-[11px] text-slate-400 hover:text-sky-400 flex items-center gap-1 transition"
+                                className="text-[11px] text-slate-400 hover:text-sky-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-800"
                                 title="Ver detalhes completos e adicionar comentários de contexto"
                               >
                                 <Eye className="w-3 h-3" />
                                 <span>Detalhes</span>
                               </button>
                               <button
+                                onClick={() => setTicketToNotifyWhatsApp(ticket)}
+                                className="text-[11px] text-slate-300 hover:text-emerald-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded bg-emerald-950/30 border border-emerald-500/30 hover:bg-emerald-900/40"
+                                title="Enviar ou formatar notificação oficial com prazo para o WhatsApp do cliente"
+                              >
+                                <Send className="w-3 h-3 text-emerald-400" />
+                                <span>Notificar</span>
+                              </button>
+                              <button
                                 onClick={() => copyWhatsAppMessage(ticket)}
-                                className="text-[11px] text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition"
+                                className="text-[11px] text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-800"
                                 title="Copiar mensagem formatada para WhatsApp"
                               >
                                 {copiedId === ticket.id ? (
@@ -1635,9 +1730,17 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                                 ) : (
                                   <>
                                     <Copy className="w-3 h-3" />
-                                    <span>WhatsApp</span>
+                                    <span>Copiar</span>
                                   </>
                                 )}
+                              </button>
+                              <button
+                                onClick={() => handleAddToGoogleCalendar(ticket)}
+                                className="text-[11px] text-slate-400 hover:text-blue-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-800"
+                                title="Adicionar bloco de 1h na Google Agenda"
+                              >
+                                <Calendar className="w-3 h-3 text-blue-400" />
+                                <span>Agenda</span>
                               </button>
                             </div>
                           </div>
@@ -1653,7 +1756,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                               </button>
                             ) : ticket.status === 'paused' ? (
                               <button
-                                onClick={() => handleStartTimer(ticket.id, '1')}
+                                onClick={() => handleStartTimer(ticket.id, GUILHERME_UUID)}
                                 className="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition shadow-sm"
                               >
                                 <Play className="w-3.5 h-3.5 fill-current" />
@@ -1661,7 +1764,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                               </button>
                             ) : (
                               <button
-                                onClick={() => handleStartTimer(ticket.id, '1')}
+                                onClick={() => handleStartTimer(ticket.id, GUILHERME_UUID)}
                                 className="flex-1 bg-blue-600 text-white font-bold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 hover:bg-blue-500 transition shadow-sm"
                               >
                                 <Play className="w-3.5 h-3.5 fill-current" />
@@ -2139,6 +2242,10 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
           setTicketToDetail(null);
           setTicketToTransfer(ticket);
         }}
+        onNotifyWhatsApp={(ticket) => {
+          setTicketToNotifyWhatsApp(ticket);
+        }}
+        onAddToCalendar={handleAddToGoogleCalendar}
         onReject={handleRejectTicket}
         onUpdateTicket={(updated) => {
           setTickets(prev => prev.map(t => t.id === updated.id ? updated : t));
@@ -2149,8 +2256,26 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
       <TransferTicketModal
         isOpen={!!ticketToTransfer}
         ticket={ticketToTransfer}
+        allTickets={tickets}
+        slaSettings={slaSettings || undefined}
         onClose={() => setTicketToTransfer(null)}
         onConfirmTransfer={handleTransferTicket}
+      />
+
+      <SendWhatsAppModal
+        isOpen={!!ticketToNotifyWhatsApp}
+        ticket={ticketToNotifyWhatsApp}
+        onClose={() => setTicketToNotifyWhatsApp(null)}
+        onSuccessNotification={() => {
+          setScanFeedback('✓ Notificação enviada com sucesso no WhatsApp!');
+          setTimeout(() => setScanFeedback(null), 4000);
+        }}
+      />
+
+      <CalendarSyncModal
+        isOpen={showCalendarSyncModal}
+        onClose={() => setShowCalendarSyncModal(false)}
+        currentMemberId={currentMemberId}
       />
     </div>
   );
