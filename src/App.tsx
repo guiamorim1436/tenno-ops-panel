@@ -205,7 +205,20 @@ export function App() {
     try {
       const { data, error } = await supabase.from('tenno_tickets').select('*').order('created_at', { ascending: false });
       if (!error && data && data.length > 0) {
-        setTickets(data);
+        const enriched: Ticket[] = data.map(t => {
+          const member = members.find(m => m.id === t.assignee_id);
+          const memberName = member?.name || (
+            t.assignee_id === 'e6e19d3e-9365-40f1-b150-8cfa03db0bf1' ? 'Guilherme' :
+            t.assignee_id === '59330c17-687d-4bd3-9c7c-0642cb71bf83' ? 'Caio' :
+            undefined
+          );
+          return {
+            ...t,
+            assignee_name: t.assignee_name || memberName,
+            rejection_reason: t.rejection_reason || t.escalation_reason
+          };
+        });
+        setTickets(enriched);
       }
     } catch {
       // Fallback silencioso para localStorage caso as tabelas ainda estejam em criação
@@ -579,17 +592,20 @@ export function App() {
     );
 
     try {
-      await supabase
+      const { error } = await supabase
         .from('tenno_tickets')
         .update({
           status: 'in_queue',
           assignee_id: targetMember.id,
-          assignee_name: targetMember.name,
           sla_hours_target: hours,
           sla_deadline: deadlineIso,
           approved_at: new Date().toISOString()
         })
         .eq('id', ticketId);
+
+      if (error) {
+        console.error('Erro ao aprovar no Supabase:', error);
+      }
     } catch (err) {
       console.warn('Erro ao aprovar no Supabase:', err);
     }
@@ -615,16 +631,18 @@ export function App() {
     );
 
     try {
-      await supabase
+      const { error } = await supabase
         .from('tenno_tickets')
         .update({
           status: 'rejected',
-          rejection_reason: reason,
-          rejected_at: nowIso,
           escalation_reason: reason,
           completed_at: nowIso
         })
         .eq('id', ticketId);
+
+      if (error) {
+        console.error('Erro ao rejeitar no Supabase:', error);
+      }
     } catch (err) {
       console.warn('Erro ao rejeitar no Supabase:', err);
     }
@@ -640,6 +658,7 @@ export function App() {
             status: 'pending_approval' as const,
             rejection_reason: undefined,
             rejected_at: undefined,
+            escalation_reason: undefined,
             completed_at: undefined
           };
         }
@@ -648,17 +667,23 @@ export function App() {
     );
 
     try {
-      await supabase
+      const { error } = await supabase
         .from('tenno_tickets')
         .update({
           status: 'pending_approval',
-          rejection_reason: null,
-          rejected_at: null,
-          completed_at: null
+          escalation_reason: null,
+          completed_at: null,
+          approved_at: null,
+          sla_deadline: null
         })
         .eq('id', ticketId);
-      setScanFeedback('✨ Demanda reativada com sucesso e movida de volta para a fila de Aprovação!');
-      setTimeout(() => setScanFeedback(null), 4000);
+
+      if (error) {
+        console.error('Erro ao reativar no Supabase:', error);
+      } else {
+        setScanFeedback('✨ Demanda reativada com sucesso e movida de volta para a fila de Aprovação!');
+        setTimeout(() => setScanFeedback(null), 4000);
+      }
     } catch (err) {
       console.warn('Erro ao reativar no Supabase:', err);
     }
