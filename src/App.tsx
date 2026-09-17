@@ -15,12 +15,14 @@ import {
   Bot,
   Sliders,
   Users2,
-  FileText
+  FileText,
+  Eye
 } from 'lucide-react';
 import { TeamMember, Ticket, TicketPriority, PauseCategory, NextActionBy } from './types';
 import { supabase } from './lib/supabase';
 import { PauseTaskModal } from './components/PauseTaskModal';
 import { ApproveTicketModal } from './components/ApproveTicketModal';
+import { TicketDetailModal } from './components/TicketDetailModal';
 import { GroupsTab } from './components/GroupsTab';
 import { SlaSettingsTab } from './components/SlaSettingsTab';
 import { MarkdownExportTab } from './components/MarkdownExportTab';
@@ -113,6 +115,7 @@ export function App() {
   const [escalateReason, setEscalateReason] = useState('');
   const [ticketToPause, setTicketToPause] = useState<Ticket | null>(null);
   const [ticketToApprove, setTicketToApprove] = useState<Ticket | null>(null);
+  const [ticketToDetail, setTicketToDetail] = useState<Ticket | null>(null);
 
   // Formulário de Nova Tarefa
   const [newTitle, setNewTitle] = useState('');
@@ -412,6 +415,36 @@ export function App() {
     }
   };
 
+  // 4b. REJEITAR DEMANDA (sem aprovação)
+  const handleRejectTicket = async (ticketId: string, reason: string) => {
+    setTickets(prev =>
+      prev.map(t => {
+        if (t.id === ticketId) {
+          return {
+            ...t,
+            status: 'rejected' as const,
+            escalation_reason: reason,
+            completed_at: new Date().toISOString()
+          };
+        }
+        return t;
+      })
+    );
+
+    try {
+      await supabase
+        .from('tenno_tickets')
+        .update({
+          status: 'rejected',
+          escalation_reason: reason,
+          completed_at: new Date().toISOString()
+        })
+        .eq('id', ticketId);
+    } catch (err) {
+      console.warn('Erro ao rejeitar no Supabase:', err);
+    }
+  };
+
   // 5. ESCALAR PARA GUILHERME
   const handleConfirmEscalation = () => {
     if (!escalateTicketId || !escalateReason.trim()) return;
@@ -509,12 +542,12 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
   // Filtros de Colunas Estritamente Isolados
   const pendingApprovalTickets = filteredTickets.filter(t => t.status === 'pending_approval');
   const caioTickets = filteredTickets.filter(
-    t => t.assignee_id === '2' && t.status !== 'pending_approval' && t.status !== 'completed'
+    t => t.assignee_id === '2' && t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected'
   );
   const guilhermeTickets = filteredTickets.filter(
-    t => t.assignee_id === '1' && t.status !== 'pending_approval' && t.status !== 'completed'
+    t => t.assignee_id === '1' && t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected'
   );
-  const completedTickets = filteredTickets.filter(t => t.status === 'completed');
+  const completedTickets = filteredTickets.filter(t => t.status === 'completed' || t.status === 'rejected');
 
   // Telemetria Universal Multi-Cliente (Calculada dinamicamente para todos os clientes)
   const clientStats = useMemo(() => {
@@ -822,13 +855,20 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                           </h4>
                         </div>
 
-                        <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+                        <div className="pt-2 border-t border-slate-800 flex items-center gap-2">
+                          <button
+                            onClick={() => setTicketToDetail(ticket)}
+                            className="flex-1 text-xs bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 font-bold py-2 px-3 rounded-lg transition flex items-center justify-center gap-1.5"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Ver Detalhes</span>
+                          </button>
                           <button
                             onClick={() => setTicketToApprove(ticket)}
-                            className="w-full text-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2 px-3 rounded-lg transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/10"
+                            className="flex-1 text-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2 px-3 rounded-lg transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/10"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Aprovar & Notificar</span>
+                            <span>Aprovar</span>
                           </button>
                         </div>
                       </div>
@@ -1479,6 +1519,17 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
         members={members}
         onClose={() => setTicketToApprove(null)}
         onConfirmApproval={handleConfirmApproval}
+      />
+
+      <TicketDetailModal
+        isOpen={!!ticketToDetail}
+        ticket={ticketToDetail}
+        onClose={() => setTicketToDetail(null)}
+        onApprove={(ticket) => {
+          setTicketToDetail(null);
+          setTicketToApprove(ticket);
+        }}
+        onReject={handleRejectTicket}
       />
     </div>
   );

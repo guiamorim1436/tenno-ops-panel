@@ -15,7 +15,8 @@ export type TicketStatus =
   | 'waiting_client'
   | 'blocked_escalated'
   | 'completed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'rejected';
 
 export type TicketPriority = 'urgente' | 'normal' | 'baixa';
 
