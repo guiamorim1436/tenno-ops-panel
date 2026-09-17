@@ -44,6 +44,7 @@ import { TransferTicketModal } from './components/TransferTicketModal';
 import { SendWhatsAppModal } from './components/SendWhatsAppModal';
 import { CalendarSyncModal } from './components/CalendarSyncModal';
 import { createGoogleCalendarUrl } from './lib/googleCalendar';
+import { calculateCalendarAwareDeadline, CalendarBusyEvent } from './lib/calendarSchedule';
 import { GroupsTab } from './components/GroupsTab';
 import { SlaSettingsTab } from './components/SlaSettingsTab';
 import { MarkdownExportTab } from './components/MarkdownExportTab';
@@ -180,6 +181,52 @@ export function App() {
   const [newClient, setNewClient] = useState('');
   const [newPriority, setNewPriority] = useState<TicketPriority>('normal');
   const [newAssignee, setNewAssignee] = useState<string>(CAIO_UUID);
+  const [newCalendarEvents, setNewCalendarEvents] = useState<CalendarBusyEvent[]>([]);
+  const [isLoadingNewCalendar, setIsLoadingNewCalendar] = useState(false);
+
+  // Busca a agenda do responsável selecionado para alocação no 1º horário livre
+  useEffect(() => {
+    if (!isNewTaskOpen) return;
+    let isMounted = true;
+    async function loadEvents() {
+      setIsLoadingNewCalendar(true);
+      try {
+        const res = await fetch(`/api/calendar-events?memberId=${newAssignee}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.events) {
+            setNewCalendarEvents(data.events);
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao carregar agenda para nova demanda:', err);
+      } finally {
+        if (isMounted) setIsLoadingNewCalendar(false);
+      }
+    }
+    loadEvents();
+    return () => { isMounted = false; };
+  }, [isNewTaskOpen, newAssignee]);
+
+  // Primeiro horário livre na agenda do responsável selecionado
+  const firstAvailableSlot = useMemo(() => {
+    let days: number[] = [1, 2, 3, 4, 5];
+    if (Array.isArray(slaSettings?.work_days)) {
+      days = slaSettings.work_days;
+    } else if (typeof slaSettings?.work_days === 'string') {
+      try { days = JSON.parse(slaSettings.work_days); } catch { days = [1, 2, 3, 4, 5]; }
+    }
+
+    return calculateCalendarAwareDeadline({
+      startDate: new Date(),
+      durationHours: 1,
+      queueHours: 0,
+      calendarEvents: newCalendarEvents,
+      startHour: slaSettings?.work_start_hour || 9,
+      endHour: slaSettings?.work_end_hour || 18,
+      workDays: days
+    });
+  }, [newCalendarEvents, slaSettings]);
 
   // Identifica o membro ativo
   const currentMember = useMemo(
@@ -858,35 +905,82 @@ export function App() {
     setEscalateReason('');
   };
 
-  // 6. CRIAR NOVA DEMANDA RÁPIDA
-  const handleCreateTask = (e: React.FormEvent) => {
+  // 6. CRIAR NOVA DEMANDA RÁPIDA (Aloca no 1º horário livre da Google Agenda)
+  const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
 
     const assigned = members.find(m => m.id === newAssignee) || members[1];
-    const { hours, deadlineIso } = calculateDeadline(newPriority);
+    const newCode = (tickets.reduce((max, t) => Math.max(max, t.ticket_code || 0), 100)) + 1;
+    const nowIso = new Date().toISOString();
+
+    // 1º Horário livre da agenda calculado
+    const deadlineIso = firstAvailableSlot.deadlineIso;
+    const slotStart = new Date(firstAvailableSlot.deadlineDate.getTime() - 60 * 60 * 1000);
 
     const newTask: Ticket = {
-      id: `t-${Date.now()}`,
-      ticket_code: tickets.length + 101,
+      id: crypto.randomUUID ? crypto.randomUUID() : `t-${Date.now()}`,
+      ticket_code: newCode,
       title: newTitle.trim(),
       client_name: newClient.trim() || 'Cliente Geral',
       status: 'in_queue',
       priority: newPriority,
       assignee_id: assigned.id,
       assignee_name: assigned.name,
-      sla_hours_target: hours,
+      sla_hours_target: 1,
       sla_deadline: deadlineIso,
-      approved_at: new Date().toISOString(),
+      approved_at: nowIso,
       is_escalated: false,
       total_time_seconds: 0,
-      created_at: new Date().toISOString()
+      created_at: nowIso
     };
 
+    // Atualização otimista imediata
     setTickets(prev => [newTask, ...prev]);
     setNewTitle('');
     setNewClient('');
     setIsNewTaskOpen(false);
+
+    // Persistência oficial no Supabase
+    try {
+      const { error } = await supabase.from('tenno_tickets').insert({
+        id: newTask.id,
+        ticket_code: newTask.ticket_code,
+        title: newTask.title,
+        client_name: newTask.client_name,
+        status: 'in_queue',
+        priority: newTask.priority,
+        assignee_id: newTask.assignee_id,
+        sla_hours_target: 1,
+        sla_deadline: newTask.sla_deadline,
+        approved_at: newTask.approved_at,
+        is_escalated: false,
+        total_time_seconds: 0,
+        created_at: newTask.created_at
+      });
+
+      if (error) {
+        console.error('Erro ao inserir demanda no Supabase:', error);
+      } else {
+        setScanFeedback(
+          `✨ Demanda #${newCode} alocada na agenda (${slotStart.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} - ${firstAvailableSlot.deadlineDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })})!`
+        );
+        setTimeout(() => setScanFeedback(null), 4500);
+      }
+    } catch (err) {
+      console.warn('Erro ao salvar demanda no Supabase:', err);
+    }
+
+    // Abre Google Agenda no primeiro horário livre calculado
+    const gcalUrl = createGoogleCalendarUrl({
+      title: newTask.title,
+      description: `Demanda TENNO #${newTask.ticket_code} - ${newTask.client_name}\nPainel: https://tenno-ops-panel.vercel.app`,
+      clientName: newTask.client_name,
+      ticketCode: newTask.ticket_code,
+      startDate: slotStart,
+      durationHours: 1
+    });
+    window.open(gcalUrl, '_blank', 'noopener,noreferrer');
   };
 
   // 7. GERADOR DE MENSAGEM WHATSAPP
@@ -1226,7 +1320,10 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
             </button>
 
             <button
-              onClick={() => setIsNewTaskOpen(true)}
+              onClick={() => {
+                setNewAssignee(currentMemberId);
+                setIsNewTaskOpen(true);
+              }}
               className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition shadow-sm"
             >
               <Plus className="w-4 h-4" />
@@ -2131,6 +2228,32 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                       </option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              {/* Box com 1º Horário Livre na Google Agenda */}
+              <div className="p-3 bg-blue-950/40 border border-blue-500/30 rounded-xl flex items-start gap-2.5 text-xs">
+                <Calendar className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-blue-200">1º Horário Livre na Google Agenda:</span>
+                    {isLoadingNewCalendar ? (
+                      <span className="text-[10px] text-blue-400 animate-pulse font-medium">Consultando agenda...</span>
+                    ) : (
+                      <span className="text-[10px] text-emerald-400 font-semibold">✓ Sem conflitos</span>
+                    )}
+                  </div>
+                  <p className="text-white font-bold text-xs">
+                    {new Date(firstAvailableSlot.deadlineDate.getTime() - 60 * 60 * 1000).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })} das {new Date(firstAvailableSlot.deadlineDate.getTime() - 60 * 60 * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} às {firstAvailableSlot.deadlineDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                  {firstAvailableSlot.collidedEvents.length > 0 && (
+                    <p className="text-[10px] text-amber-300/90">
+                      ⚡ Pula automaticamente compromisso existente: {firstAvailableSlot.collidedEvents.slice(0, 2).join(', ')}
+                    </p>
+                  )}
+                  <p className="text-[10px] text-slate-400">
+                    A tarefa entrará neste horário da sua agenda e uma aba do Google Agenda abrirá para confirmação.
+                  </p>
                 </div>
               </div>
 
