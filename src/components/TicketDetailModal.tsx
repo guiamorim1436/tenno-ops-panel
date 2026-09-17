@@ -27,6 +27,7 @@ interface TicketDetailModalProps {
   onApprove?: (ticket: Ticket) => void;
   onReject?: (ticketId: string, reason: string) => void;
   onTransfer?: (ticket: Ticket) => void;
+  onPostpone?: (ticket: Ticket) => void;
   onUpdateTicket?: (updatedTicket: Ticket) => void;
   onNotifyWhatsApp?: (ticket: Ticket) => void;
   onAddToCalendar?: (ticket: Ticket) => void;
@@ -40,6 +41,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
   onApprove,
   onReject,
   onTransfer,
+  onPostpone,
   onUpdateTicket,
   onNotifyWhatsApp,
   onAddToCalendar
@@ -70,9 +72,9 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
   });
 
   const priorityConfig = {
-    urgente: { bg: 'bg-rose-500/20', text: 'text-rose-300', border: 'border-rose-500/30' },
-    normal: { bg: 'bg-amber-500/20', text: 'text-amber-300', border: 'border-amber-500/30' },
-    baixa: { bg: 'bg-slate-800', text: 'text-slate-400', border: 'border-slate-700' }
+    urgente: { bg: 'bg-rose-500/10 dark:bg-rose-500/20', text: 'text-rose-600 dark:text-rose-300', border: 'border-rose-300 dark:border-rose-500/30' },
+    normal: { bg: 'bg-amber-500/10 dark:bg-amber-500/20', text: 'text-amber-700 dark:text-amber-300', border: 'border-amber-300 dark:border-amber-500/30' },
+    baixa: { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-600 dark:text-slate-400', border: 'border-slate-200 dark:border-slate-700' }
   };
 
   const prio = priorityConfig[ticket.priority] || priorityConfig.normal;
@@ -185,29 +187,29 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-      <div className="bg-[#0f1523] border border-slate-700/60 rounded-2xl w-full max-w-2xl shadow-2xl text-slate-100 max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 dark:bg-black/80 backdrop-blur-sm animate-fadeIn">
+      <div className="bg-white dark:bg-[#0f1523] border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-2xl shadow-2xl text-slate-800 dark:text-slate-100 max-h-[92vh] flex flex-col transition-colors">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 pb-4 border-b border-slate-800">
+        <div className="flex items-center justify-between p-6 pb-4 border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/30">
+            <div className="p-2.5 rounded-xl bg-sky-500/10 dark:bg-sky-500/20 text-sky-600 dark:text-sky-400 border border-sky-500/20 dark:border-sky-500/30">
               <FileText className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-bold text-base text-white">Detalhes da Demanda</h3>
-                <span className="text-xs font-mono text-slate-400 font-semibold bg-slate-800/80 px-2 py-0.5 rounded">
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">Detalhes da Demanda</h3>
+                <span className="text-xs font-mono text-slate-600 dark:text-slate-400 font-semibold bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700">
                   #{ticket.ticket_code}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Cliente: <strong className="text-emerald-400">{ticket.client_name}</strong> • Status: {ticket.status}
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Cliente: <strong className="text-emerald-600 dark:text-emerald-400">{ticket.client_name}</strong> • Status: {ticket.status}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition"
           >
             <X className="w-5 h-5" />
           </button>
@@ -218,7 +220,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
           {/* Título & Ação de Edição */}
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1">
-              <label className="text-[11px] uppercase tracking-wider font-semibold text-slate-500 mb-1 block">
+              <label className="text-[11px] uppercase tracking-wider font-semibold text-slate-400 dark:text-slate-500 mb-1 block">
                 Título da Demanda
               </label>
               {isEditingDesc ? (
@@ -226,10 +228,10 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                   type="text"
                   value={editedTitle}
                   onChange={e => setEditedTitle(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-emerald-500/50 rounded-lg text-sm text-white focus:outline-none"
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-emerald-500 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none"
                 />
               ) : (
-                <h4 className="text-sm font-semibold text-white leading-relaxed">
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white leading-relaxed">
                   {ticket.title}
                 </h4>
               )}
@@ -238,7 +240,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
             {!isEditingDesc ? (
               <button
                 onClick={handleStartEditing}
-                className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 bg-slate-800/60 hover:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700 transition"
+                className="text-[11px] text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center gap-1 bg-slate-100 dark:bg-slate-800/60 hover:bg-slate-200 dark:hover:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 transition"
                 title="Editar título e descrição"
               >
                 <Edit3 className="w-3 h-3" />
@@ -248,7 +250,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => setIsEditingDesc(false)}
-                  className="text-[11px] text-slate-400 hover:text-white px-2.5 py-1 rounded-lg bg-slate-800 transition"
+                  className="text-[11px] text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 transition"
                 >
                   Cancelar
                 </button>
@@ -266,7 +268,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
 
           {/* Descrição e Contexto Original */}
           <div>
-            <label className="text-[11px] uppercase tracking-wider font-semibold text-slate-500 mb-1 block">
+            <label className="text-[11px] uppercase tracking-wider font-semibold text-slate-400 dark:text-slate-500 mb-1 block">
               Descrição & Histórico
             </label>
             {isEditingDesc ? (
@@ -274,30 +276,30 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                 rows={6}
                 value={editedDesc}
                 onChange={e => setEditedDesc(e.target.value)}
-                className="w-full p-3 bg-slate-950 border border-emerald-500/50 rounded-xl text-xs text-slate-200 focus:outline-none leading-relaxed"
+                className="w-full p-3 bg-slate-50 dark:bg-slate-950 border border-emerald-500 rounded-xl text-xs text-slate-800 dark:text-slate-200 focus:outline-none leading-relaxed"
               />
             ) : mainDescription ? (
-              <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
+              <div className="bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl p-4 text-xs text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
                 {mainDescription}
               </div>
             ) : (
-              <p className="text-xs text-slate-600 italic">
+              <p className="text-xs text-slate-400 dark:text-slate-600 italic">
                 Nenhuma descrição disponível para esta demanda.
               </p>
             )}
           </div>
 
           {/* Seção de Notas de Contexto & Comentários Internos */}
-          <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800/80 space-y-3">
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-emerald-400" />
-                <span className="text-xs font-bold text-white">
+                <MessageSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span className="text-xs font-bold text-slate-900 dark:text-white">
                   Contextualização & Notas da Equipe
                 </span>
               </div>
               {commentSavedFeedback && (
-                <span className="text-[11px] text-emerald-400 flex items-center gap-1 font-semibold animate-fadeIn">
+                <span className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-semibold animate-fadeIn">
                   <Check className="w-3 h-3" /> Contexto salvo!
                 </span>
               )}
@@ -307,7 +309,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
             {contextNotesText ? (
               <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                 {contextNotesText.split('\n').filter(Boolean).map((note, idx) => (
-                  <div key={idx} className="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 text-xs text-emerald-300/90 leading-snug font-mono">
+                  <div key={idx} className="p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 text-xs text-emerald-700 dark:text-emerald-300/90 leading-snug font-mono">
                     {note}
                   </div>
                 ))}
@@ -325,7 +327,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                 value={newComment}
                 onChange={e => setNewComment(e.target.value)}
                 placeholder="Ex: Vote em Mulheres é a secretária do Dr Cicero. O material pedido é o manual do bot..."
-                className="flex-1 px-3 py-2 bg-slate-950 border border-slate-700/80 rounded-lg text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+                className="flex-1 px-3 py-2 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none focus:border-emerald-500"
               />
               <button
                 type="submit"
@@ -341,23 +343,23 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
           {/* Grid de Metadados */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {/* Cliente */}
-            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
+            <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3">
               <div className="flex items-center gap-1.5 mb-1">
-                <User className="w-3 h-3 text-emerald-400" />
-                <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">
+                <User className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-400 dark:text-slate-500">
                   Cliente Vinculado
                 </span>
               </div>
-              <p className="text-xs font-semibold text-emerald-400 truncate">
+              <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 truncate">
                 {ticket.client_name || 'Não definido'}
               </p>
             </div>
 
             {/* Prioridade */}
-            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
+            <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3">
               <div className="flex items-center gap-1.5 mb-1">
-                <Tag className="w-3 h-3 text-amber-400" />
-                <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">
+                <Tag className="w-3 h-3 text-amber-500" />
+                <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-400 dark:text-slate-500">
                   Prioridade
                 </span>
               </div>
@@ -366,15 +368,27 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               </span>
             </div>
 
-            {/* Prazo Oficial SLA */}
-            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3 col-span-2 sm:col-span-1">
-              <div className="flex items-center gap-1.5 mb-1">
-                <Clock className="w-3 h-3 text-amber-400" />
-                <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">
-                  Prazo Oficial (SLA)
-                </span>
+            {/* Prazo Oficial SLA com botão de Postergar */}
+            <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3 col-span-2 sm:col-span-1">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  <Clock className="w-3 h-3 text-amber-500" />
+                  <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-400 dark:text-slate-500">
+                    Prazo Oficial (SLA)
+                  </span>
+                </div>
+                {onPostpone && (
+                  <button
+                    onClick={() => onPostpone(ticket)}
+                    className="text-[10px] bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-bold transition flex items-center gap-1"
+                    title="Postergar ou alterar prazo da demanda"
+                  >
+                    <Clock className="w-2.5 h-2.5" />
+                    <span>Postergar</span>
+                  </button>
+                )}
               </div>
-              <p className="text-xs font-bold text-amber-300">
+              <p className="text-xs font-bold text-amber-600 dark:text-amber-300">
                 {ticket.sla_deadline
                   ? new Date(ticket.sla_deadline).toLocaleDateString('pt-BR', {
                       weekday: 'short',
@@ -388,25 +402,25 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
             </div>
 
             {/* Data de Criação */}
-            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
+            <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3">
               <div className="flex items-center gap-1.5 mb-1">
-                <Clock className="w-3 h-3 text-sky-400" />
-                <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">
+                <Clock className="w-3 h-3 text-sky-500" />
+                <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-400 dark:text-slate-500">
                   Criada em
                 </span>
               </div>
-              <p className="text-xs text-slate-300">{createdAt}</p>
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">{createdAt}</p>
             </div>
 
             {/* Origem */}
-            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
+            <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3">
               <div className="flex items-center gap-1.5 mb-1">
-                <MessageSquare className="w-3 h-3 text-purple-400" />
-                <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">
+                <MessageSquare className="w-3 h-3 text-purple-500" />
+                <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-400 dark:text-slate-500">
                   Origem
                 </span>
               </div>
-              <p className="text-xs text-slate-300">
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                 {ticket.origin_whatsapp_group_id
                   ? `WhatsApp (${ticket.origin_whatsapp_group_id.slice(0, 14)}...)`
                   : 'Criação manual'}
@@ -416,10 +430,10 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
 
           {/* Formulário de Rejeição */}
           {showRejectForm && (
-            <div className="bg-rose-500/5 border border-rose-500/30 rounded-xl p-4 space-y-3 animate-fadeIn">
+            <div className="bg-rose-50 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/30 rounded-xl p-4 space-y-3 animate-fadeIn">
               <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-400" />
-                <span className="text-xs font-bold text-rose-300">Motivo da Rejeição</span>
+                <AlertTriangle className="w-4 h-4 text-rose-500 dark:text-rose-400" />
+                <span className="text-xs font-bold text-rose-700 dark:text-rose-300">Motivo da Rejeição</span>
               </div>
               <textarea
                 autoFocus
@@ -427,12 +441,12 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                 value={rejectReason}
                 onChange={e => setRejectReason(e.target.value)}
                 placeholder="Explique brevemente por que esta demanda está sendo rejeitada..."
-                className="w-full px-3.5 py-2.5 bg-slate-900 border border-rose-500/30 rounded-xl text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-rose-400"
+                className="w-full px-3.5 py-2.5 bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-500/30 rounded-xl text-xs text-slate-900 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none focus:border-rose-400"
               />
               <div className="flex gap-2">
                 <button
                   onClick={() => { setShowRejectForm(false); setRejectReason(''); }}
-                  className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
+                  className="px-3 py-2 rounded-lg bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold transition"
                 >
                   Cancelar
                 </button>
@@ -450,12 +464,12 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
         </div>
 
         {/* Footer - Ações */}
-        <div className="p-6 pt-4 border-t border-slate-800 flex items-center justify-between gap-3">
+        <div className="p-6 pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
           {ticket.status === 'pending_approval' && !showRejectForm ? (
             <>
               <button
                 onClick={() => setShowRejectForm(true)}
-                className="px-4 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold text-xs transition flex items-center gap-1.5"
+                className="px-4 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30 font-semibold text-xs transition flex items-center gap-1.5"
               >
                 <XCircle className="w-4 h-4" />
                 Rejeitar
@@ -478,11 +492,25 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                       onClose();
                       onTransfer(ticket);
                     }}
-                    className="px-3.5 py-2 rounded-xl bg-indigo-500/20 hover:bg-indigo-500 text-indigo-300 hover:text-white border border-indigo-500/30 text-xs font-semibold transition flex items-center gap-1.5"
+                    className="px-3.5 py-2 rounded-xl bg-indigo-500/10 dark:bg-indigo-500/20 hover:bg-indigo-500 text-indigo-700 dark:text-indigo-300 hover:text-white border border-indigo-200 dark:border-indigo-500/30 text-xs font-semibold transition flex items-center gap-1.5"
                     title="Transferir esta tarefa para outro membro da equipe"
                   >
                     <ArrowRightLeft className="w-3.5 h-3.5" />
                     <span>Transferir</span>
+                  </button>
+                )}
+
+                {ticket.status !== 'completed' && ticket.status !== 'rejected' && onPostpone && (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      onPostpone(ticket);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-amber-500/10 dark:bg-amber-500/20 hover:bg-amber-500 text-amber-700 dark:text-amber-300 hover:text-slate-950 border border-amber-200 dark:border-amber-500/30 text-xs font-semibold transition flex items-center gap-1.5"
+                    title="Postergar e alterar o prazo desta demanda"
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Postergar Prazo</span>
                   </button>
                 )}
 
@@ -492,7 +520,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                       onClose();
                       onNotifyWhatsApp(ticket);
                     }}
-                    className="px-3.5 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border border-emerald-500/30 text-xs font-semibold transition flex items-center gap-1.5"
+                    className="px-3.5 py-2 rounded-xl bg-emerald-500/10 dark:bg-emerald-500/20 hover:bg-emerald-500 text-emerald-700 dark:text-emerald-300 hover:text-slate-950 border border-emerald-200 dark:border-emerald-500/30 text-xs font-semibold transition flex items-center gap-1.5"
                     title="Enviar notificação oficial com prazo para o grupo do cliente"
                   >
                     <Send className="w-3.5 h-3.5" />
@@ -505,7 +533,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                     onClick={() => {
                       onAddToCalendar(ticket);
                     }}
-                    className="px-3.5 py-2 rounded-xl bg-blue-500/20 hover:bg-blue-500 text-blue-300 hover:text-white border border-blue-500/30 text-xs font-semibold transition flex items-center gap-1.5"
+                    className="px-3.5 py-2 rounded-xl bg-blue-500/10 dark:bg-blue-500/20 hover:bg-blue-500 text-blue-700 dark:text-blue-300 hover:text-white border border-blue-200 dark:border-blue-500/30 text-xs font-semibold transition flex items-center gap-1.5"
                     title="Adicionar bloco de 1h na Google Agenda"
                   >
                     <Calendar className="w-3.5 h-3.5" />
@@ -517,7 +545,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               <div className="flex items-center gap-2 ml-auto">
                 <button
                   onClick={onClose}
-                  className="px-5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition"
+                  className="px-5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition border border-slate-200 dark:border-slate-700"
                 >
                   Fechar
                 </button>

@@ -22,7 +22,10 @@ import {
   LogOut, 
   Send,
   ArrowRightLeft,
-  Calendar
+  Calendar,
+  Sun,
+  Moon,
+  Edit3
 } from 'lucide-react';
 import { 
   TeamMember, 
@@ -41,6 +44,7 @@ import { PauseTaskModal } from './components/PauseTaskModal';
 import { ApproveTicketModal } from './components/ApproveTicketModal';
 import { TicketDetailModal } from './components/TicketDetailModal';
 import { TransferTicketModal } from './components/TransferTicketModal';
+import { PostponeTicketModal } from './components/PostponeTicketModal';
 import { SendWhatsAppModal } from './components/SendWhatsAppModal';
 import { CalendarSyncModal } from './components/CalendarSyncModal';
 import { createGoogleCalendarUrl } from './lib/googleCalendar';
@@ -158,6 +162,24 @@ export function App() {
     setCurrentUser(null);
   };
 
+  // Estado do Tema (Claro / Escuro)
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const saved = localStorage.getItem('tenno_ops_theme');
+    return saved === 'light' ? 'light' : 'dark';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('tenno_ops_theme', theme);
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+      root.classList.remove('light');
+    } else {
+      root.classList.remove('dark');
+      root.classList.add('light');
+    }
+  }, [theme]);
+
   // Estado da UI
   const [viewTab, setViewTab] = useState<'board' | 'telemetry' | 'groups' | 'sla' | 'markdown'>('board');
   const [rightColumnTab, setRightColumnTab] = useState<'completed' | 'rejected'>('completed');
@@ -173,6 +195,7 @@ export function App() {
   const [ticketToApprove, setTicketToApprove] = useState<Ticket | null>(null);
   const [ticketToDetail, setTicketToDetail] = useState<Ticket | null>(null);
   const [ticketToTransfer, setTicketToTransfer] = useState<Ticket | null>(null);
+  const [ticketToPostpone, setTicketToPostpone] = useState<Ticket | null>(null);
   const [ticketToNotifyWhatsApp, setTicketToNotifyWhatsApp] = useState<Ticket | null>(null);
   const [showCalendarSyncModal, setShowCalendarSyncModal] = useState<boolean>(false);
 
@@ -800,7 +823,67 @@ export function App() {
     }
   };
 
-  // 4b. REJEITAR DEMANDA (com rastreabilidade e auditoria)
+  // 4b. POSTERGAR / AJUSTAR PRAZO DA TAREFA
+  const handleSavePostpone = async (
+    ticketId: string,
+    newDeadlineIso: string,
+    reason?: string,
+    notifyWhatsApp?: boolean
+  ) => {
+    const ticket = tickets.find(t => t.id === ticketId);
+    if (!ticket) return;
+
+    const timestamp = new Date().toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    const deadlineFormatted = new Date(newDeadlineIso).toLocaleDateString('pt-BR', {
+      weekday: 'short',
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    const auditNote = `• [${timestamp} - ${currentMember.name}]: Prazo postergado para ${deadlineFormatted}${reason ? ` (Motivo: ${reason})` : ''}`;
+    const contextMarker = '--- Contexto & Notas da Equipe ---';
+    let newDescription = ticket.description || '';
+    if (newDescription.includes(contextMarker)) {
+      newDescription = `${newDescription}\n${auditNote}`;
+    } else {
+      newDescription = `${newDescription.trim()}\n\n${contextMarker}\n${auditNote}`;
+    }
+
+    const updatedTicket: Ticket = {
+      ...ticket,
+      sla_deadline: newDeadlineIso,
+      description: newDescription
+    };
+
+    setTickets(prev => prev.map(t => t.id === ticketId ? updatedTicket : t));
+
+    try {
+      await supabase.from('tenno_tickets').update({
+        sla_deadline: newDeadlineIso,
+        description: newDescription
+      }).eq('id', ticketId);
+
+      setScanFeedback(`✓ Prazo da demanda #${ticket.ticket_code} atualizado para ${deadlineFormatted}!`);
+      setTimeout(() => setScanFeedback(null), 4000);
+    } catch (err) {
+      console.warn('Erro ao atualizar prazo no banco:', err);
+    }
+
+    setTicketToPostpone(null);
+
+    if (notifyWhatsApp) {
+      setTicketToNotifyWhatsApp(updatedTicket);
+    }
+  };
+
+  // 4c. REJEITAR DEMANDA (com rastreabilidade e auditoria)
   const handleRejectTicket = async (ticketId: string, reason: string) => {
     const nowIso = new Date().toISOString();
     setTickets(prev =>
@@ -1146,27 +1229,27 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0d14] text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-50 dark:bg-[#090d16] text-slate-800 dark:text-slate-100 flex flex-col font-sans transition-colors">
       {/* ========================================================================= */}
       {/* 1. BARRA DE FOCO SUPERIOR (STICKY HEADER) */}
       {/* ========================================================================= */}
-      <header className="sticky top-0 z-40 bg-[#0d121d]/90 backdrop-blur border-b border-slate-800 px-6 py-3">
+      <header className="sticky top-0 z-40 bg-white/95 dark:bg-[#0c101b]/95 backdrop-blur border-b border-slate-200 dark:border-slate-800 px-6 py-3 transition-colors shadow-sm">
         <div className="max-w-[1700px] mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           {/* Logo & Seletor de Perfil */}
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center font-bold text-emerald-400">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/15 dark:bg-emerald-500/20 border border-emerald-500/30 dark:border-emerald-500/40 flex items-center justify-center font-bold text-emerald-600 dark:text-emerald-400 shadow-sm">
                 T
               </div>
-              <span className="font-bold text-lg tracking-tight text-white">
-                TENNO <span className="text-emerald-400 text-sm font-semibold uppercase tracking-wider">Ops</span>
+              <span className="font-bold text-lg tracking-tight text-slate-900 dark:text-white">
+                TENNO <span className="text-emerald-600 dark:text-emerald-400 text-sm font-semibold uppercase tracking-wider">Ops</span>
               </span>
             </div>
 
-            <div className="h-5 w-px bg-slate-800 hidden sm:block" />
+            <div className="h-5 w-px bg-slate-200 dark:bg-slate-800 hidden sm:block" />
 
             {/* Alternador de Perfil */}
-            <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-1 text-xs font-medium">
+            <div className="flex items-center bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-1 text-xs font-medium">
               {members.map(m => (
                 <button
                   key={m.id}
@@ -1176,7 +1259,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                       ? m.id === '1'
                         ? 'bg-blue-600 text-white shadow'
                         : 'bg-purple-600 text-white shadow'
-                      : 'text-slate-400 hover:text-white'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
                   <Users className="w-3.5 h-3.5" />
@@ -1190,7 +1273,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
           {/* TIMER MONO-TAREFA EM DESTAQUE */}
           <div className="flex-1 max-w-2xl w-full">
             {activeTicket ? (
-              <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl px-4 py-2 flex items-center justify-between gap-4 shadow-lg shadow-emerald-950/20">
+              <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-500/30 rounded-xl px-4 py-2 flex items-center justify-between gap-4 shadow-lg shadow-emerald-500/5 dark:shadow-emerald-950/20">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="relative flex h-3 w-3">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -1198,26 +1281,26 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono font-bold text-emerald-400">
+                      <span className="text-xs font-mono font-bold text-emerald-700 dark:text-emerald-400">
                         #{activeTicket.ticket_code}
                       </span>
-                      <span className="text-xs text-slate-400 truncate max-w-[160px]">
+                      <span className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-[160px]">
                         {activeTicket.client_name}
                       </span>
                     </div>
-                    <p className="text-xs font-semibold text-white truncate max-w-[280px]">
+                    <p className="text-xs font-semibold text-slate-900 dark:text-white truncate max-w-[280px]">
                       {activeTicket.title}
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <div className="font-mono text-xl font-black text-emerald-400 tracking-wider">
+                  <div className="font-mono text-xl font-black text-emerald-600 dark:text-emerald-400 tracking-wider">
                     {formatTimer(activeSeconds)}
                   </div>
                   <button
                     onClick={() => handleOpenPauseModal(activeTicket)}
-                    className="p-1.5 rounded-lg bg-amber-500/20 border border-amber-500/30 text-amber-300 hover:bg-amber-500/30 transition text-xs flex items-center gap-1 font-semibold"
+                    className="p-1.5 rounded-lg bg-amber-500/15 dark:bg-amber-500/20 border border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25 dark:hover:bg-amber-500/30 transition text-xs flex items-center gap-1 font-semibold"
                     title="Pausar cronômetro"
                   >
                     <Pause className="w-4 h-4" />
@@ -1225,7 +1308,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                   </button>
                   <button
                     onClick={() => handleCompleteTask(activeTicket.id)}
-                    className="p-1.5 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 transition text-xs flex items-center gap-1 font-bold"
+                    className="p-1.5 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 transition text-xs flex items-center gap-1 font-bold shadow-sm"
                     title="Concluir demanda"
                   >
                     <CheckCircle2 className="w-4 h-4" />
@@ -1234,11 +1317,11 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                 </div>
               </div>
             ) : (
-              <div className="bg-slate-900/60 border border-slate-800 rounded-xl px-4 py-2.5 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
-                <Clock className="w-4 h-4 text-slate-500" />
+              <div className="bg-slate-100/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-center text-xs text-slate-600 dark:text-slate-400 flex items-center justify-center gap-2">
+                <Clock className="w-4 h-4 text-slate-400 dark:text-slate-500" />
                 <span>
                   Modo Mono-tarefa ativo para <strong>{currentMember.name}</strong>. Dê{' '}
-                  <strong className="text-emerald-400">Play</strong> em um card para focar em uma tarefa por vez.
+                  <strong className="text-emerald-600 dark:text-emerald-400">Play</strong> em um card para focar em uma tarefa por vez.
                 </span>
               </div>
             )}
@@ -1246,11 +1329,13 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
 
           {/* Botões de Navegação & Ação */}
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            <div className="flex bg-slate-900 border border-slate-800 rounded-lg p-1 text-xs">
+            <div className="flex bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-1 text-xs">
               <button
                 onClick={() => setViewTab('board')}
                 className={`px-3 py-1.5 rounded-md transition ${
-                  viewTab === 'board' ? 'bg-slate-800 text-white font-semibold' : 'text-slate-400'
+                  viewTab === 'board'
+                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 Fila Ágil
@@ -1258,7 +1343,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
               <button
                 onClick={() => setViewTab('telemetry')}
                 className={`px-3 py-1.5 rounded-md transition flex items-center gap-1.5 ${
-                  viewTab === 'telemetry' ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400'
+                  viewTab === 'telemetry' ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <TrendingUp className="w-3.5 h-3.5" />
@@ -1267,7 +1352,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
               <button
                 onClick={() => setViewTab('groups')}
                 className={`px-3 py-1.5 rounded-md transition flex items-center gap-1.5 ${
-                  viewTab === 'groups' ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400'
+                  viewTab === 'groups' ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <Users2 className="w-3.5 h-3.5" />
@@ -1276,7 +1361,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
               <button
                 onClick={() => setViewTab('sla')}
                 className={`px-3 py-1.5 rounded-md transition flex items-center gap-1.5 ${
-                  viewTab === 'sla' ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400'
+                  viewTab === 'sla' ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <Sliders className="w-3.5 h-3.5" />
@@ -1285,7 +1370,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
               <button
                 onClick={() => setViewTab('markdown')}
                 className={`px-3 py-1.5 rounded-md transition flex items-center gap-1.5 ${
-                  viewTab === 'markdown' ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400'
+                  viewTab === 'markdown' ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
                 title="Exportar tarefas organizadas em Markdown para o Obsidian"
               >
@@ -1307,19 +1392,19 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
             <button
               onClick={handleSendDailyReport}
               disabled={isSendingReport}
-              className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 transition border border-slate-800 hover:border-emerald-500/40 shadow-sm"
+              className="bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 disabled:opacity-50 text-slate-700 dark:text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 transition border border-slate-200 dark:border-slate-800 shadow-sm"
               title="Disparar relatório diário consolidado para o grupo Relatórios Diários no WhatsApp"
             >
-              <Send className={`w-3.5 h-3.5 text-emerald-400 ${isSendingReport ? 'animate-pulse' : ''}`} />
+              <Send className={`w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400 ${isSendingReport ? 'animate-pulse' : ''}`} />
               <span className="hidden sm:inline">{isSendingReport ? 'Enviando...' : 'Relatório Diário'}</span>
             </button>
 
             <button
               onClick={() => setShowCalendarSyncModal(true)}
-              className="bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 transition border border-slate-800 hover:border-blue-500/40 shadow-sm"
+              className="bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 transition border border-slate-200 dark:border-slate-800 shadow-sm"
               title="Sincronizar demandas com o Google Agenda via link iCal ou Web"
             >
-              <Calendar className="w-3.5 h-3.5 text-blue-400" />
+              <Calendar className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
               <span className="hidden sm:inline">Google Agenda</span>
             </button>
 
@@ -1334,15 +1419,34 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
               Nova Demanda
             </button>
 
+            {/* Alternador de Tema Claro / Escuro */}
+            <button
+              onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+              className="bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold px-2.5 py-2 rounded-lg flex items-center gap-1.5 transition border border-slate-200 dark:border-slate-800 shadow-sm cursor-pointer"
+              title={theme === 'dark' ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
+            >
+              {theme === 'dark' ? (
+                <>
+                  <Sun className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden md:inline">Claro</span>
+                </>
+              ) : (
+                <>
+                  <Moon className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="hidden md:inline">Escuro</span>
+                </>
+              )}
+            </button>
+
             {/* Usuário Logado & Logout */}
-            <div className="flex items-center gap-2.5 pl-2.5 border-l border-slate-800">
+            <div className="flex items-center gap-2.5 pl-2.5 border-l border-slate-200 dark:border-slate-800">
               <div className="text-right hidden xl:block">
-                <p className="text-xs font-bold text-white leading-tight">{currentUser.name}</p>
-                <p className="text-[10px] text-emerald-400 font-medium">{currentUser.role}</p>
+                <p className="text-xs font-bold text-slate-900 dark:text-white leading-tight">{currentUser.name}</p>
+                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">{currentUser.role}</p>
               </div>
               <button
                 onClick={handleLogout}
-                className="bg-slate-900 hover:bg-rose-950/60 hover:text-rose-300 border border-slate-800 hover:border-rose-800/60 text-slate-400 text-xs px-2.5 py-2 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                className="bg-slate-100 dark:bg-slate-900 hover:bg-rose-50 dark:hover:bg-rose-950/60 hover:text-rose-600 dark:hover:text-rose-300 border border-slate-200 dark:border-slate-800 hover:border-rose-300 dark:hover:border-rose-800/60 text-slate-600 dark:text-slate-400 text-xs px-2.5 py-2 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
                 title="Desconectar da sessão operacional"
               >
                 <LogOut className="w-3.5 h-3.5" />
@@ -1373,19 +1477,19 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
         {viewTab === 'board' && (
           <>
             {/* Barra de Filtro Rápido */}
-            <div className="mb-6 flex items-center justify-between gap-4">
-              <div className="relative max-w-sm w-full">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <div className="mb-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="relative max-w-md w-full">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
                 <input
                   type="text"
                   placeholder="Buscar por cliente, clínica ou demanda..."
                   value={searchTerm}
                   onChange={e => setSearchTerm(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                  className="w-full pl-9 pr-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-emerald-500 shadow-sm transition"
                 />
               </div>
 
-              <div className="flex items-center gap-4 text-xs text-slate-400">
+              <div className="flex items-center gap-4 text-xs font-medium text-slate-600 dark:text-slate-400">
                 <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
                   Urgente (4h)
@@ -1395,7 +1499,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                   Normal (24h)
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-slate-500" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-slate-400 dark:bg-slate-600" />
                   Baixa (72h)
                 </div>
               </div>
@@ -1403,40 +1507,41 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
 
             {/* QUADRO DE COLUNAS ÁGEIS */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 flex-1 items-start">
-              {/* COLUNA 1: PENDENTE DE APROVAÇÃO */}
-              <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex flex-col min-h-[600px]">
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
+              {/* COLUNA 1: PENDENTE DE APROVAÇÃO (INBOX) */}
+              <div className="bg-amber-500/[0.03] dark:bg-amber-950/[0.08] border border-amber-200/80 dark:border-amber-900/30 rounded-2xl p-4 flex flex-col min-h-[600px] shadow-sm">
+                <div className="flex items-center justify-between pb-3 mb-3 border-b border-amber-200/60 dark:border-amber-900/40">
                   <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-                    <h3 className="font-bold text-sm text-slate-200">Inbox / Aprovação</h3>
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">00 - Inbox</h3>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">(Triagem)</span>
                   </div>
-                  <span className="text-xs bg-slate-800 text-slate-300 font-mono px-2 py-0.5 rounded-full">
+                  <span className="text-xs bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono font-bold px-2 py-0.5 rounded-full shadow-sm">
                     {pendingApprovalTickets.length}
                   </span>
                 </div>
 
                 <div className="space-y-3 flex-1 overflow-y-auto pr-1">
                   {pendingApprovalTickets.length === 0 ? (
-                    <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-600">
+                    <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-500 italic">
                       Nenhuma demanda pendente de aprovação.
                     </div>
                   ) : (
                     pendingApprovalTickets.map(ticket => (
                       <div
                         key={ticket.id}
-                        className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl p-4 space-y-3 transition shadow-sm"
+                        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-xl p-4 space-y-3 transition shadow-sm hover:shadow-md"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-mono text-slate-400 font-bold">
+                          <span className="text-xs font-mono text-slate-600 dark:text-slate-400 font-bold bg-slate-100 dark:bg-slate-800/80 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
                             #{ticket.ticket_code}
                           </span>
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
                               ticket.priority === 'urgente'
-                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                ? 'bg-rose-500/10 dark:bg-rose-500/20 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30'
                                 : ticket.priority === 'normal'
-                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                : 'bg-slate-800 text-slate-400'
+                                ? 'bg-amber-500/10 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                             }`}
                           >
                             {ticket.priority}
@@ -1444,18 +1549,18 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                         </div>
 
                         <div>
-                          <div className="text-xs text-emerald-400 font-semibold mb-1 truncate">
+                          <div className="text-xs text-emerald-700 dark:text-emerald-400 font-semibold mb-1 truncate">
                             {ticket.client_name}
                           </div>
-                          <h4 className="text-xs font-medium text-slate-200 leading-snug">
+                          <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-snug">
                             {ticket.title}
                           </h4>
                         </div>
 
-                        <div className="pt-2 border-t border-slate-800 flex items-center gap-2">
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2">
                           <button
                             onClick={() => setTicketToDetail(ticket)}
-                            className="flex-1 text-xs bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 font-bold py-2 px-3 rounded-lg transition flex items-center justify-center gap-1.5"
+                            className="flex-1 text-xs bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/30 font-bold py-2 px-3 rounded-lg transition flex items-center justify-center gap-1.5"
                           >
                             <Eye className="w-3.5 h-3.5" />
                             <span>Ver Detalhes</span>
@@ -1475,21 +1580,21 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
               </div>
 
               {/* COLUNA 2: FILA DO CAIO */}
-              <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex flex-col min-h-[600px]">
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
+              <div className="bg-purple-500/[0.03] dark:bg-purple-950/[0.08] border border-purple-200/80 dark:border-purple-900/30 rounded-2xl p-4 flex flex-col min-h-[600px] shadow-sm">
+                <div className="flex items-center justify-between pb-3 mb-3 border-b border-purple-200/60 dark:border-purple-900/40">
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-purple-500" />
-                    <h3 className="font-bold text-sm text-slate-200">Fila do Caio</h3>
-                    <span className="text-[11px] text-slate-500">(Suporte & Implantação)</span>
+                    <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Fila do Caio</h3>
+                    <span className="text-[11px] text-purple-600 dark:text-purple-400 font-medium">(Suporte & Implantação)</span>
                   </div>
-                  <span className="text-xs bg-slate-800 text-slate-300 font-mono px-2 py-0.5 rounded-full">
+                  <span className="text-xs bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono font-bold px-2 py-0.5 rounded-full shadow-sm">
                     {caioTickets.length}
                   </span>
                 </div>
 
                 <div className="space-y-3 flex-1 overflow-y-auto pr-1">
                   {caioTickets.length === 0 ? (
-                    <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-600">
+                    <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-500 italic">
                       Caio está com a fila zerada!
                     </div>
                   ) : (
@@ -1498,41 +1603,44 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                       return (
                         <div
                           key={ticket.id}
-                          className={`bg-slate-900 border rounded-xl p-4 space-y-3 transition shadow-sm ${
+                          className={`bg-white dark:bg-slate-900 border rounded-xl p-4 space-y-3 transition shadow-sm hover:shadow-md ${
                             isRunning
-                              ? 'border-emerald-500 shadow-emerald-950/30'
-                              : 'border-slate-800 hover:border-slate-700'
+                              ? 'border-2 border-emerald-500 shadow-emerald-500/10 dark:shadow-emerald-950/30'
+                              : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
                           }`}
                         >
                           <div className="flex items-center justify-between">
-                            <span className="text-xs font-mono text-slate-400 font-bold">
+                            <span className="text-xs font-mono text-slate-600 dark:text-slate-400 font-bold bg-slate-100 dark:bg-slate-800/80 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
                               #{ticket.ticket_code}
                             </span>
                             <div className="flex items-center gap-1.5 flex-wrap justify-end">
                               {ticket.sla_deadline ? (
-                                <span 
-                                  className="text-[10px] font-bold text-amber-300 flex items-center gap-1 bg-amber-950/60 border border-amber-500/40 px-2 py-0.5 rounded shadow-sm"
-                                  title={`Prazo útil projetado: ${new Date(ticket.sla_deadline).toLocaleString('pt-BR')}`}
+                                <button 
+                                  onClick={() => setTicketToPostpone(ticket)}
+                                  className="text-[10px] font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-500/40 px-2 py-0.5 rounded shadow-sm hover:bg-amber-100 dark:hover:bg-amber-900/60 transition cursor-pointer"
+                                  title={`Prazo útil: ${new Date(ticket.sla_deadline).toLocaleString('pt-BR')} — Clique para postergar ou alterar`}
                                 >
-                                  <Clock className="w-3 h-3 text-amber-400" />
+                                  <Clock className="w-3 h-3 text-amber-600 dark:text-amber-400" />
                                   <span>Prazo: {formatSlaBadge(ticket.sla_deadline)}</span>
-                                </span>
+                                  <Edit3 className="w-2.5 h-2.5 opacity-60 ml-0.5" />
+                                </button>
                               ) : (
-                                <span 
-                                  className="text-[10px] text-slate-500 flex items-center gap-1 bg-slate-800/40 px-1.5 py-0.5 rounded"
-                                  title="Sem prazo de SLA registrado"
+                                <button 
+                                  onClick={() => setTicketToPostpone(ticket)}
+                                  className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-1 bg-slate-100 dark:bg-slate-800/40 px-1.5 py-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-300 transition cursor-pointer"
+                                  title="Definir prazo SLA para esta demanda"
                                 >
-                                  <Clock className="w-3 h-3 text-slate-500" />
-                                  <span>Sem prazo</span>
-                                </span>
+                                  <Clock className="w-3 h-3 text-slate-400 dark:text-slate-500" />
+                                  <span>Definir prazo</span>
+                                </button>
                               )}
                               <span
                                 className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
                                   ticket.priority === 'urgente'
-                                    ? 'bg-rose-500/20 text-rose-300'
+                                    ? 'bg-rose-500/10 dark:bg-rose-500/20 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30'
                                     : ticket.priority === 'normal'
-                                    ? 'bg-amber-500/20 text-amber-300'
-                                    : 'bg-slate-800 text-slate-400'
+                                    ? 'bg-amber-500/10 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30'
+                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                                 }`}
                               >
                                 {ticket.priority}
@@ -1541,66 +1649,74 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                           </div>
 
                           <div>
-                            <div className="text-xs text-purple-400 font-semibold mb-1 truncate">
+                            <div className="text-xs text-purple-700 dark:text-purple-400 font-semibold mb-1 truncate">
                               {ticket.client_name}
                             </div>
-                            <h4 className="text-xs font-medium text-slate-200 leading-snug">
+                            <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-snug">
                               {ticket.title}
                             </h4>
                           </div>
 
                           {/* Destaque de Demanda Pausada */}
                           {ticket.status === 'paused' && ticket.pause_reason && (
-                            <div className="p-2.5 rounded-lg bg-amber-950/40 border border-amber-500/30 text-[11px] space-y-1">
+                            <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-500/30 text-[11px] space-y-1">
                               <div className="flex items-center justify-between">
-                                <span className="font-bold text-amber-400">
+                                <span className="font-bold text-amber-700 dark:text-amber-400">
                                   {ticket.pause_category === 'aguardando_cliente' ? '🟡 Aguardando Cliente' :
                                    ticket.pause_category === 'problema_tecnico' ? '🔴 Bloqueio Técnico' :
                                    ticket.pause_category === 'aguardando_meta' ? '🔵 Aguardando Meta' : '⚪ Pausada'}
                                 </span>
-                                <span className="text-[10px] text-amber-300/90 bg-amber-900/50 px-1.5 py-0.5 rounded font-medium">
+                                <span className="text-[10px] text-amber-800 dark:text-amber-300/90 bg-amber-100 dark:bg-amber-900/50 px-1.5 py-0.5 rounded font-medium">
                                   Bola com: {ticket.next_action_by === 'cliente' ? 'Cliente' : ticket.next_action_by === 'guilherme' ? 'Guilherme' : 'Caio'}
                                 </span>
                               </div>
-                              <p className="text-amber-200/90 text-[11px] italic">"{ticket.pause_reason}"</p>
+                              <p className="text-amber-900 dark:text-amber-200/90 text-[11px] italic">"{ticket.pause_reason}"</p>
                             </div>
                           )}
 
-                          <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 flex-wrap gap-1.5">
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between pt-1 flex-wrap gap-1.5">
                             <span>
                               Tempo gasto:{' '}
-                              <strong className="text-white font-mono">
+                              <strong className="text-slate-900 dark:text-white font-mono">
                                 {formatHumanTime(
                                   ticket.id === activeTicket?.id ? activeSeconds : ticket.total_time_seconds
                                 )}
                               </strong>
                             </span>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <button
                                 onClick={() => setTicketToDetail(ticket)}
-                                className="text-[11px] text-slate-400 hover:text-sky-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-800"
+                                className="text-[11px] text-slate-600 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
                                 title="Ver detalhes completos e adicionar comentários de contexto"
                               >
                                 <Eye className="w-3 h-3" />
                                 <span>Detalhes</span>
                               </button>
                               <button
-                                onClick={() => setTicketToNotifyWhatsApp(ticket)}
-                                className="text-[11px] text-slate-300 hover:text-emerald-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded bg-emerald-950/30 border border-emerald-500/30 hover:bg-emerald-900/40"
-                                title="Enviar ou formatar notificação oficial com prazo para o WhatsApp do cliente"
+                                onClick={() => setTicketToPostpone(ticket)}
+                                className="text-[11px] text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-300 flex items-center gap-1 transition px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-500/30 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                                title="Postergar ou alterar prazo da demanda"
                               >
-                                <Send className="w-3 h-3 text-emerald-400" />
+                                <Clock className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                                <span>Postergar</span>
+                              </button>
+                              <button
+                                onClick={() => setTicketToNotifyWhatsApp(ticket)}
+                                className="text-[11px] text-emerald-700 dark:text-slate-300 hover:text-emerald-800 dark:hover:text-emerald-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-500/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/40"
+                                title="Enviar notificação oficial com prazo para o WhatsApp do cliente"
+                              >
+                                <Send className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                                 <span>Notificar</span>
                               </button>
                               <button
                                 onClick={() => copyWhatsAppMessage(ticket)}
-                                className="text-[11px] text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-800"
+                                className="text-[11px] text-slate-600 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
                                 title="Copiar mensagem formatada para WhatsApp"
                               >
                                 {copiedId === ticket.id ? (
                                   <>
-                                    <Check className="w-3 h-3 text-emerald-400" />
-                                    <span className="text-emerald-400">Copiado!</span>
+                                    <Check className="w-3 h-3 text-emerald-500" />
+                                    <span className="text-emerald-500 font-bold">Copiado!</span>
                                   </>
                                 ) : (
                                   <>
@@ -1611,21 +1727,21 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                               </button>
                               <button
                                 onClick={() => handleAddToGoogleCalendar(ticket)}
-                                className="text-[11px] text-slate-400 hover:text-blue-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-800"
+                                className="text-[11px] text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
                                 title="Adicionar bloco de 1h na Google Agenda"
                               >
-                                <Calendar className="w-3 h-3 text-blue-400" />
+                                <Calendar className="w-3 h-3 text-blue-500" />
                                 <span>Agenda</span>
                               </button>
                             </div>
                           </div>
 
                           {/* Botões de Ação do Card */}
-                          <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+                          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
                             {isRunning ? (
                               <button
                                 onClick={() => handleOpenPauseModal(ticket)}
-                                className="flex-1 bg-amber-500/20 border border-amber-500/40 text-amber-300 font-semibold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 hover:bg-amber-500/30 transition"
+                                className="flex-1 bg-amber-50 dark:bg-amber-500/20 border border-amber-200 dark:border-amber-500/40 text-amber-700 dark:text-amber-300 font-bold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 hover:bg-amber-100 dark:hover:bg-amber-500/30 transition"
                               >
                                 <Pause className="w-3.5 h-3.5" />
                                 Pausar
@@ -1651,27 +1767,27 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                             {/* Botão de Transferir */}
                             <button
                               onClick={() => setTicketToTransfer(ticket)}
-                              className="bg-slate-800 hover:bg-indigo-950/60 hover:text-indigo-300 text-slate-400 border border-slate-700 hover:border-indigo-500/40 px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition"
+                              className="bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 hover:text-indigo-600 dark:hover:text-indigo-300 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition"
                               title="Transferir demanda para outro membro da equipe"
                             >
-                              <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-400" />
+                              <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
                               <span className="hidden sm:inline">Transferir</span>
                             </button>
 
                             {/* Botão de Escalonamento */}
                             <button
                               onClick={() => setEscalateTicketId(ticket.id)}
-                              className="bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 text-slate-400 border border-slate-700 hover:border-rose-500/40 px-2 py-1.5 rounded-lg text-xs flex items-center gap-1 transition"
+                              className="bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/60 hover:text-rose-600 dark:hover:text-rose-300 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 px-2 py-1.5 rounded-lg text-xs flex items-center gap-1 transition"
                               title="Travei num bug: passar para Guilherme"
                             >
-                              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                              <AlertTriangle className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
                               <span className="hidden sm:inline">Escalar</span>
                             </button>
 
                             {/* Botão de Conclusão */}
                             <button
                               onClick={() => handleCompleteTask(ticket.id)}
-                              className="bg-emerald-500/20 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 font-bold px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition border border-emerald-500/30"
+                              className="bg-emerald-50 dark:bg-emerald-500/20 hover:bg-emerald-500 text-emerald-700 dark:text-emerald-300 hover:text-white dark:hover:text-slate-950 font-bold px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition border border-emerald-200 dark:border-emerald-500/30"
                               title="Concluir demanda"
                             >
                               <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1686,21 +1802,21 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
               </div>
 
               {/* COLUNA 3: FILA DO GUILHERME */}
-              <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex flex-col min-h-[600px]">
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
+              <div className="bg-blue-500/[0.03] dark:bg-blue-950/[0.08] border border-blue-200/80 dark:border-blue-900/30 rounded-2xl p-4 flex flex-col min-h-[600px] shadow-sm">
+                <div className="flex items-center justify-between pb-3 mb-3 border-b border-blue-200/60 dark:border-blue-900/40">
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                    <h3 className="font-bold text-sm text-slate-200">Fila do Guilherme</h3>
-                    <span className="text-[11px] text-slate-500">(Bugs & Arquitetura)</span>
+                    <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Fila do Guilherme</h3>
+                    <span className="text-[11px] text-blue-600 dark:text-blue-400 font-medium">(Bugs & Arquitetura)</span>
                   </div>
-                  <span className="text-xs bg-slate-800 text-slate-300 font-mono px-2 py-0.5 rounded-full">
+                  <span className="text-xs bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono font-bold px-2 py-0.5 rounded-full shadow-sm">
                     {guilhermeTickets.length}
                   </span>
                 </div>
 
                 <div className="space-y-3 flex-1 overflow-y-auto pr-1">
                   {guilhermeTickets.length === 0 ? (
-                    <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-600">
+                    <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-500 italic">
                       Nenhum bug complexo na fila do Guilherme.
                     </div>
                   ) : (
@@ -1709,20 +1825,20 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                       return (
                         <div
                           key={ticket.id}
-                          className={`bg-slate-900 border rounded-xl p-4 space-y-3 transition shadow-sm ${
+                          className={`bg-white dark:bg-slate-900 border rounded-xl p-4 space-y-3 transition shadow-sm hover:shadow-md ${
                             ticket.is_escalated
-                              ? 'border-rose-500/50 bg-rose-950/10'
+                              ? 'border-rose-300 dark:border-rose-500/50 bg-rose-50/50 dark:bg-rose-950/10'
                               : isRunning
-                              ? 'border-emerald-500'
-                              : 'border-slate-800 hover:border-slate-700'
+                              ? 'border-2 border-emerald-500 shadow-emerald-500/10 dark:shadow-emerald-950/30'
+                              : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
                           }`}
                         >
                           {/* Banner de Escalonamento */}
                           {ticket.is_escalated && (
-                            <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-2 text-[11px] text-rose-300 flex items-start gap-2">
-                              <Flame className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                            <div className="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-lg p-2 text-[11px] text-rose-700 dark:text-rose-300 flex items-start gap-2">
+                              <Flame className="w-4 h-4 text-rose-500 dark:text-rose-400 shrink-0 mt-0.5" />
                               <div>
-                                <span className="font-bold uppercase tracking-wider text-[10px] text-rose-400 block">
+                                <span className="font-bold uppercase tracking-wider text-[10px] text-rose-600 dark:text-rose-400 block">
                                   Escalado pelo Caio
                                 </span>
                                 {ticket.escalation_reason}
@@ -1731,34 +1847,37 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                           )}
 
                           <div className="flex items-center justify-between">
-                            <span className="text-xs font-mono text-slate-400 font-bold">
+                            <span className="text-xs font-mono text-slate-600 dark:text-slate-400 font-bold bg-slate-100 dark:bg-slate-800/80 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
                               #{ticket.ticket_code}
                             </span>
                             <div className="flex items-center gap-1.5 flex-wrap justify-end">
                               {ticket.sla_deadline ? (
-                                <span 
-                                  className="text-[10px] font-bold text-amber-300 flex items-center gap-1 bg-amber-950/60 border border-amber-500/40 px-2 py-0.5 rounded shadow-sm"
-                                  title={`Prazo útil projetado: ${new Date(ticket.sla_deadline).toLocaleString('pt-BR')}`}
+                                <button 
+                                  onClick={() => setTicketToPostpone(ticket)}
+                                  className="text-[10px] font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-500/40 px-2 py-0.5 rounded shadow-sm hover:bg-amber-100 dark:hover:bg-amber-900/60 transition cursor-pointer"
+                                  title={`Prazo útil: ${new Date(ticket.sla_deadline).toLocaleString('pt-BR')} — Clique para postergar ou alterar`}
                                 >
-                                  <Clock className="w-3 h-3 text-amber-400" />
+                                  <Clock className="w-3 h-3 text-amber-600 dark:text-amber-400" />
                                   <span>Prazo: {formatSlaBadge(ticket.sla_deadline)}</span>
-                                </span>
+                                  <Edit3 className="w-2.5 h-2.5 opacity-60 ml-0.5" />
+                                </button>
                               ) : (
-                                <span 
-                                  className="text-[10px] text-slate-500 flex items-center gap-1 bg-slate-800/40 px-1.5 py-0.5 rounded"
-                                  title="Sem prazo de SLA registrado"
+                                <button 
+                                  onClick={() => setTicketToPostpone(ticket)}
+                                  className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-1 bg-slate-100 dark:bg-slate-800/40 px-1.5 py-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-300 transition cursor-pointer"
+                                  title="Definir prazo SLA para esta demanda"
                                 >
-                                  <Clock className="w-3 h-3 text-slate-500" />
-                                  <span>Sem prazo</span>
-                                </span>
+                                  <Clock className="w-3 h-3 text-slate-400 dark:text-slate-500" />
+                                  <span>Definir prazo</span>
+                                </button>
                               )}
                               <span
                                 className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
                                   ticket.priority === 'urgente'
-                                    ? 'bg-rose-500/20 text-rose-300'
+                                    ? 'bg-rose-500/10 dark:bg-rose-500/20 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30'
                                     : ticket.priority === 'normal'
-                                    ? 'bg-blue-500/20 text-blue-300'
-                                    : 'bg-slate-800 text-slate-400'
+                                    ? 'bg-blue-500/10 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30'
+                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                                 }`}
                               >
                                 {ticket.priority}
@@ -1767,66 +1886,74 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                           </div>
 
                           <div>
-                            <div className="text-xs text-blue-400 font-semibold mb-1 truncate">
+                            <div className="text-xs text-blue-700 dark:text-blue-400 font-semibold mb-1 truncate">
                               {ticket.client_name}
                             </div>
-                            <h4 className="text-xs font-medium text-slate-200 leading-snug">
+                            <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-snug">
                               {ticket.title}
                             </h4>
                           </div>
 
                           {/* Destaque de Demanda Pausada */}
                           {ticket.status === 'paused' && ticket.pause_reason && (
-                            <div className="p-2.5 rounded-lg bg-amber-950/40 border border-amber-500/30 text-[11px] space-y-1">
+                            <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-500/30 text-[11px] space-y-1">
                               <div className="flex items-center justify-between">
-                                <span className="font-bold text-amber-400">
+                                <span className="font-bold text-amber-700 dark:text-amber-400">
                                   {ticket.pause_category === 'aguardando_cliente' ? '🟡 Aguardando Cliente' :
                                    ticket.pause_category === 'problema_tecnico' ? '🔴 Bloqueio Técnico' :
                                    ticket.pause_category === 'aguardando_meta' ? '🔵 Aguardando Meta' : '⚪ Pausada'}
                                 </span>
-                                <span className="text-[10px] text-amber-300/90 bg-amber-900/50 px-1.5 py-0.5 rounded font-medium">
+                                <span className="text-[10px] text-amber-800 dark:text-amber-300/90 bg-amber-100 dark:bg-amber-900/50 px-1.5 py-0.5 rounded font-medium">
                                   Bola com: {ticket.next_action_by === 'cliente' ? 'Cliente' : ticket.next_action_by === 'guilherme' ? 'Guilherme' : 'Caio'}
                                 </span>
                               </div>
-                              <p className="text-amber-200/90 text-[11px] italic">"{ticket.pause_reason}"</p>
+                              <p className="text-amber-900 dark:text-amber-200/90 text-[11px] italic">"{ticket.pause_reason}"</p>
                             </div>
                           )}
 
-                          <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 flex-wrap gap-1.5">
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between pt-1 flex-wrap gap-1.5">
                             <span>
                               Tempo acumulado:{' '}
-                              <strong className="text-white font-mono">
+                              <strong className="text-slate-900 dark:text-white font-mono">
                                 {formatHumanTime(
                                   ticket.id === activeTicket?.id ? activeSeconds : ticket.total_time_seconds
                                 )}
                               </strong>
                             </span>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <button
                                 onClick={() => setTicketToDetail(ticket)}
-                                className="text-[11px] text-slate-400 hover:text-sky-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-800"
+                                className="text-[11px] text-slate-600 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
                                 title="Ver detalhes completos e adicionar comentários de contexto"
                               >
                                 <Eye className="w-3 h-3" />
                                 <span>Detalhes</span>
                               </button>
                               <button
-                                onClick={() => setTicketToNotifyWhatsApp(ticket)}
-                                className="text-[11px] text-slate-300 hover:text-emerald-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded bg-emerald-950/30 border border-emerald-500/30 hover:bg-emerald-900/40"
-                                title="Enviar ou formatar notificação oficial com prazo para o WhatsApp do cliente"
+                                onClick={() => setTicketToPostpone(ticket)}
+                                className="text-[11px] text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-300 flex items-center gap-1 transition px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-500/30 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                                title="Postergar ou alterar prazo da demanda"
                               >
-                                <Send className="w-3 h-3 text-emerald-400" />
+                                <Clock className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                                <span>Postergar</span>
+                              </button>
+                              <button
+                                onClick={() => setTicketToNotifyWhatsApp(ticket)}
+                                className="text-[11px] text-emerald-700 dark:text-slate-300 hover:text-emerald-800 dark:hover:text-emerald-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-500/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/40"
+                                title="Enviar notificação oficial com prazo para o WhatsApp do cliente"
+                              >
+                                <Send className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                                 <span>Notificar</span>
                               </button>
                               <button
                                 onClick={() => copyWhatsAppMessage(ticket)}
-                                className="text-[11px] text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-800"
+                                className="text-[11px] text-slate-600 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
                                 title="Copiar mensagem formatada para WhatsApp"
                               >
                                 {copiedId === ticket.id ? (
                                   <>
-                                    <Check className="w-3 h-3 text-emerald-400" />
-                                    <span className="text-emerald-400">Copiado!</span>
+                                    <Check className="w-3 h-3 text-emerald-500" />
+                                    <span className="text-emerald-500 font-bold">Copiado!</span>
                                   </>
                                 ) : (
                                   <>
@@ -1837,20 +1964,20 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                               </button>
                               <button
                                 onClick={() => handleAddToGoogleCalendar(ticket)}
-                                className="text-[11px] text-slate-400 hover:text-blue-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-800"
+                                className="text-[11px] text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1 transition px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
                                 title="Adicionar bloco de 1h na Google Agenda"
                               >
-                                <Calendar className="w-3 h-3 text-blue-400" />
+                                <Calendar className="w-3 h-3 text-blue-500" />
                                 <span>Agenda</span>
                               </button>
                             </div>
                           </div>
 
-                          <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+                          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
                             {isRunning ? (
                               <button
                                 onClick={() => handleOpenPauseModal(ticket)}
-                                className="flex-1 bg-amber-500/20 border border-amber-500/40 text-amber-300 font-semibold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 hover:bg-amber-500/30 transition"
+                                className="flex-1 bg-amber-50 dark:bg-amber-500/20 border border-amber-200 dark:border-amber-500/40 text-amber-700 dark:text-amber-300 font-bold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 hover:bg-amber-100 dark:hover:bg-amber-500/30 transition"
                               >
                                 <Pause className="w-3.5 h-3.5" />
                                 Pausar
@@ -1876,16 +2003,16 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                             {/* Botão de Transferir */}
                             <button
                               onClick={() => setTicketToTransfer(ticket)}
-                              className="bg-slate-800 hover:bg-indigo-950/60 hover:text-indigo-300 text-slate-400 border border-slate-700 hover:border-indigo-500/40 px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition"
+                              className="bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 hover:text-indigo-600 dark:hover:text-indigo-300 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition"
                               title="Transferir demanda para Caio ou outro responsável"
                             >
-                              <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-400" />
+                              <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
                               <span className="hidden sm:inline">Transferir</span>
                             </button>
 
                             <button
                               onClick={() => handleCompleteTask(ticket.id)}
-                              className="bg-emerald-500/20 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 font-bold px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition border border-emerald-500/30"
+                              className="bg-emerald-50 dark:bg-emerald-500/20 hover:bg-emerald-500 text-emerald-700 dark:text-emerald-300 hover:text-white dark:hover:text-slate-950 font-bold px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition border border-emerald-200 dark:border-emerald-500/30"
                               title="Concluir demanda"
                             >
                               <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1900,20 +2027,20 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
               </div>
 
               {/* COLUNA 4: CONCLUÍDOS / REJEITADOS (RASTREABILIDADE) */}
-              <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex flex-col min-h-[600px]">
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
-                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+              <div className="bg-white dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 flex flex-col min-h-[600px] shadow-sm">
+                <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800">
                     <button
                       onClick={() => setRightColumnTab('completed')}
                       className={`px-2.5 py-1 rounded-md text-xs font-bold transition flex items-center gap-1.5 ${
                         rightColumnTab === 'completed'
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                          : 'text-slate-400 hover:text-white'
+                          ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
+                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                       }`}
                     >
                       <span className="w-2 h-2 rounded-full bg-emerald-500" />
                       Concluídos
-                      <span className="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.2 rounded-full">
+                      <span className="text-[10px] bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1.5 py-0.2 rounded-full">
                         {completedTickets.length}
                       </span>
                     </button>
@@ -1921,13 +2048,13 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                       onClick={() => setRightColumnTab('rejected')}
                       className={`px-2.5 py-1 rounded-md text-xs font-bold transition flex items-center gap-1.5 ${
                         rightColumnTab === 'rejected'
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                          : 'text-slate-400 hover:text-white'
+                          ? 'bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-500/30'
+                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                       }`}
                     >
                       <span className="w-2 h-2 rounded-full bg-rose-500" />
                       Rejeitados
-                      <span className="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.2 rounded-full">
+                      <span className="text-[10px] bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1.5 py-0.2 rounded-full">
                         {rejectedTickets.length}
                       </span>
                     </button>
@@ -1937,28 +2064,28 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                 <div className="space-y-3 flex-1 overflow-y-auto pr-1">
                   {rightColumnTab === 'completed' ? (
                     completedTickets.length === 0 ? (
-                      <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-600">
+                      <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-400 dark:text-slate-600">
                         Nenhuma demanda concluída ainda hoje.
                       </div>
                     ) : (
                       completedTickets.map(ticket => (
                         <div
                           key={ticket.id}
-                          className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-4 space-y-2 opacity-80 hover:opacity-100 transition"
+                          className="bg-slate-50/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/80 rounded-xl p-4 space-y-2 opacity-90 hover:opacity-100 transition shadow-sm"
                         >
                           <div className="flex items-center justify-between">
-                            <span className="text-xs font-mono text-slate-500 font-bold">
+                            <span className="text-xs font-mono text-slate-400 dark:text-slate-500 font-bold">
                               #{ticket.ticket_code}
                             </span>
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={() => setTicketToDetail(ticket)}
-                                className="text-[11px] text-slate-400 hover:text-sky-400 flex items-center gap-1 transition"
+                                className="text-[11px] text-slate-400 hover:text-sky-500 flex items-center gap-1 transition"
                                 title="Ver detalhes completos"
                               >
-                                <Eye className="w-3 h-3" />
+                                <Eye className="w-3.5 h-3.5" />
                               </button>
-                              <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded font-semibold flex items-center gap-1">
+                              <span className="text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 px-2 py-0.5 rounded font-semibold flex items-center gap-1">
                                 <Check className="w-3 h-3" />
                                 Finalizado
                               </span>
@@ -1966,15 +2093,15 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                           </div>
 
                           <div>
-                            <div className="text-xs text-slate-400 truncate">{ticket.client_name}</div>
-                            <h4 className="text-xs font-medium text-slate-300 line-through">
+                            <div className="text-xs text-slate-500 dark:text-slate-400 truncate">{ticket.client_name}</div>
+                            <h4 className="text-xs font-medium text-slate-500 dark:text-slate-400 line-through">
                               {ticket.title}
                             </h4>
                           </div>
 
-                          <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
-                            <span>Executado por: {ticket.assignee_name}</span>
-                            <span className="font-mono text-slate-300">
+                          <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
+                            <span>Executado por: <strong className="text-slate-700 dark:text-slate-300">{ticket.assignee_name}</strong></span>
+                            <span className="font-mono text-slate-700 dark:text-slate-300 font-bold">
                               ⏱️ {formatHumanTime(ticket.total_time_seconds)}
                             </span>
                           </div>
@@ -1983,46 +2110,46 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                     )
                   ) : (
                     rejectedTickets.length === 0 ? (
-                      <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-600">
+                      <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-400 dark:text-slate-600">
                         Nenhuma demanda rejeitada registrada.
                       </div>
                     ) : (
                       rejectedTickets.map(ticket => (
                         <div
                           key={ticket.id}
-                          className="bg-rose-950/20 border border-rose-900/40 rounded-xl p-4 space-y-2.5 transition"
+                          className="bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/40 rounded-xl p-4 space-y-2.5 transition shadow-sm"
                         >
                           <div className="flex items-center justify-between">
-                            <span className="text-xs font-mono text-rose-400/80 font-bold">
+                            <span className="text-xs font-mono text-rose-500 dark:text-rose-400/80 font-bold">
                               #{ticket.ticket_code}
                             </span>
-                            <span className="text-[10px] text-rose-300 bg-rose-500/20 px-2 py-0.5 rounded font-semibold flex items-center gap-1">
+                            <span className="text-[10px] text-rose-700 dark:text-rose-300 bg-rose-100 dark:bg-rose-500/20 px-2 py-0.5 rounded font-semibold flex items-center gap-1 border border-rose-200 dark:border-rose-500/30">
                               <XCircle className="w-3 h-3" />
                               Rejeitado
                             </span>
                           </div>
 
                           <div>
-                            <div className="text-xs text-slate-400 truncate">{ticket.client_name}</div>
-                            <h4 className="text-xs font-medium text-slate-200">
+                            <div className="text-xs text-slate-500 dark:text-slate-400 truncate">{ticket.client_name}</div>
+                            <h4 className="text-xs font-medium text-slate-800 dark:text-slate-200">
                               {ticket.title}
                             </h4>
                           </div>
 
                           {/* Justificativa da Rejeição */}
-                          <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-800/40 text-[11px] space-y-1">
-                            <div className="text-rose-400 font-semibold flex items-center gap-1">
+                          <div className="p-2.5 rounded-lg bg-rose-100/60 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800/40 text-[11px] space-y-1">
+                            <div className="text-rose-700 dark:text-rose-400 font-semibold flex items-center gap-1">
                               <span>Justificativa da Rejeição:</span>
                             </div>
-                            <p className="text-slate-300 italic text-[11px] leading-relaxed">
+                            <p className="text-slate-700 dark:text-slate-300 italic text-[11px] leading-relaxed">
                               "{ticket.rejection_reason || ticket.escalation_reason || 'Sem justificativa informada'}"
                             </p>
                           </div>
 
-                          <div className="pt-2 border-t border-rose-900/40 flex items-center justify-between text-[11px]">
+                          <div className="pt-2 border-t border-rose-200 dark:border-rose-900/40 flex items-center justify-between text-[11px]">
                             <button
                               onClick={() => setTicketToDetail(ticket)}
-                              className="text-slate-400 hover:text-white flex items-center gap-1"
+                              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center gap-1"
                               title="Ver detalhes da demanda"
                             >
                               <Eye className="w-3 h-3" />
@@ -2031,10 +2158,10 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
 
                             <button
                               onClick={() => handleReactivateTicket(ticket.id)}
-                              className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold px-2 py-1 rounded text-[11px] flex items-center gap-1 transition border border-slate-700 hover:border-slate-600"
+                              className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold px-2 py-1 rounded text-[11px] flex items-center gap-1 transition border border-slate-300 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-600"
                               title="Mover de volta para a fila de aprovação"
                             >
-                              <RotateCcw className="w-3 h-3 text-amber-400" />
+                              <RotateCcw className="w-3 h-3 text-amber-500 dark:text-amber-400" />
                               <span>Reativar</span>
                             </button>
                           </div>
@@ -2055,60 +2182,60 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
           <div className="space-y-6">
             {/* Cards de Resumo */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm">
+                <span className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold">
                   Horas Totais Registradas
                 </span>
-                <div className="text-2xl font-black text-emerald-400 mt-1 font-mono">
+                <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1 font-mono">
                   {clientStats.totalHours}h
                 </div>
-                <span className="text-xs text-slate-500">Tempo acumulado de execução</span>
+                <span className="text-xs text-slate-400 dark:text-slate-500">Tempo acumulado de execução</span>
               </div>
 
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm">
+                <span className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold">
                   Total de Demandas
                 </span>
-                <div className="text-2xl font-black text-white mt-1 font-mono">
+                <div className="text-2xl font-black text-slate-900 dark:text-white mt-1 font-mono">
                   {clientStats.totalTicketsCount}
                 </div>
-                <span className="text-xs text-slate-500">Chamados no sistema</span>
+                <span className="text-xs text-slate-400 dark:text-slate-500">Chamados no sistema</span>
               </div>
 
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm">
+                <span className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold">
                   Média por Demanda
                 </span>
-                <div className="text-2xl font-black text-amber-400 mt-1 font-mono">
+                <div className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1 font-mono">
                   {clientStats.avgMinutesPerTicket} min
                 </div>
-                <span className="text-xs text-slate-500">Tempo médio de resolução</span>
+                <span className="text-xs text-slate-400 dark:text-slate-500">Tempo médio de resolução</span>
               </div>
 
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm">
+                <span className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold">
                   Clientes Atendidos
                 </span>
-                <div className="text-2xl font-black text-purple-400 mt-1 font-mono">
+                <div className="text-2xl font-black text-purple-600 dark:text-purple-400 mt-1 font-mono">
                   {clientStats.clientsList.length}
                 </div>
-                <span className="text-xs text-slate-500">Contas com demandas registradas</span>
+                <span className="text-xs text-slate-400 dark:text-slate-500">Contas com demandas registradas</span>
               </div>
             </div>
 
             {/* Tabela Universal de Clientes */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
-                <h3 className="font-bold text-sm text-white">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
+              <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white">
                   Consumo de Horas e Demandas por Cliente
                 </h3>
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-slate-500 dark:text-slate-400">
                   {clientStats.clientsList.length} contas monitoradas
                 </span>
               </div>
 
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/60 text-slate-400 font-semibold border-b border-slate-800">
+                <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-600 dark:text-slate-400 font-semibold border-b border-slate-200 dark:border-slate-800">
                   <tr>
                     <th className="px-6 py-3">Cliente / Conta</th>
                     <th className="px-6 py-3">Total de Chamados</th>
@@ -2117,20 +2244,20 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                     <th className="px-6 py-3">Horas Decimais</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800 text-slate-300">
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
                   {clientStats.clientsList.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-6 py-8 text-center text-slate-500">
+                      <td colSpan={5} className="px-6 py-8 text-center text-slate-400 dark:text-slate-500">
                         Nenhum cliente com tempo registrado ainda. Inicie o cronômetro em uma tarefa para registrar.
                       </td>
                     </tr>
                   ) : (
                     clientStats.clientsList.map((c, i) => (
-                      <tr key={i} className="hover:bg-slate-800/40 transition">
-                        <td className="px-6 py-3 font-medium text-white">{c.name}</td>
+                      <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
+                        <td className="px-6 py-3 font-medium text-slate-900 dark:text-white">{c.name}</td>
                         <td className="px-6 py-3 font-mono">{c.totalTickets} chamados</td>
-                        <td className="px-6 py-3 font-mono text-emerald-400">{c.completedTickets} concluídos</td>
-                        <td className="px-6 py-3 font-mono font-semibold text-emerald-400">
+                        <td className="px-6 py-3 font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{c.completedTickets} concluídos</td>
+                        <td className="px-6 py-3 font-mono font-semibold text-emerald-600 dark:text-emerald-400">
                           {c.formattedTime}
                         </td>
                         <td className="px-6 py-3 font-mono font-semibold">{c.hours}h</td>
@@ -2157,16 +2284,16 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
       {/* 4. MODAL: NOVA DEMANDA RÁPIDA */}
       {/* ========================================================================= */}
       {isNewTaskOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-white">Criar Nova Demanda Rápida</h3>
+        <div className="fixed inset-0 z-50 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">Criar Nova Demanda Rápida</h3>
 
             <form onSubmit={handleCreateTask} className="space-y-4 text-xs">
               <div>
-                <label className="block text-slate-400 font-semibold mb-1 flex items-center justify-between">
+                <label className="block text-slate-600 dark:text-slate-400 font-semibold mb-1 flex items-center justify-between">
                   <span>Cliente / Grupo de WhatsApp:</span>
                   {clientOptions.length > 0 && (
-                    <span className="text-[10px] text-emerald-400 font-normal">
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal">
                       {clientOptions.length} clientes vinculados disponíveis
                     </span>
                   )}
@@ -2177,7 +2304,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                   value={newClient}
                   onChange={e => setNewClient(e.target.value)}
                   placeholder="Selecione um cliente vinculado ou digite..."
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none focus:border-emerald-500"
                   required
                 />
                 <datalist id="client-options-list">
@@ -2188,7 +2315,7 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
               </div>
 
               <div>
-                <label className="block text-slate-400 font-semibold mb-1">
+                <label className="block text-slate-600 dark:text-slate-400 font-semibold mb-1">
                   Descrição da Demanda:
                 </label>
                 <textarea
@@ -2196,20 +2323,20 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                   onChange={e => setNewTitle(e.target.value)}
                   placeholder="Ex: Corrigir trigger do bot no WhatsApp que não salva telefone no Kommo..."
                   rows={3}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none focus:border-emerald-500"
                   required
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 font-semibold mb-1">
+                  <label className="block text-slate-600 dark:text-slate-400 font-semibold mb-1">
                     Prioridade (SLA):
                   </label>
                   <select
                     value={newPriority}
                     onChange={e => setNewPriority(e.target.value as TicketPriority)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
                   >
                     <option value="urgente">Urgente (4h)</option>
                     <option value="normal">Normal (24h)</option>
@@ -2218,13 +2345,13 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                 </div>
 
                 <div>
-                  <label className="block text-slate-400 font-semibold mb-1">
+                  <label className="block text-slate-600 dark:text-slate-400 font-semibold mb-1">
                     Responsável Inicial:
                   </label>
                   <select
                     value={newAssignee}
                     onChange={e => setNewAssignee(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
                   >
                     {members.map(m => (
                       <option key={m.id} value={m.id}>
@@ -2236,42 +2363,42 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
               </div>
 
               {/* Box com 1º Horário Livre na Google Agenda */}
-              <div className="p-3 bg-blue-950/40 border border-blue-500/30 rounded-xl flex items-start gap-2.5 text-xs">
-                <Calendar className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+              <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-500/30 rounded-xl flex items-start gap-2.5 text-xs">
+                <Calendar className="w-4 h-4 text-blue-500 dark:text-blue-400 shrink-0 mt-0.5" />
                 <div className="flex-1 space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-blue-200">1º Horário Livre na Google Agenda:</span>
+                    <span className="font-semibold text-blue-800 dark:text-blue-200">1º Horário Livre na Google Agenda:</span>
                     {isLoadingNewCalendar ? (
-                      <span className="text-[10px] text-blue-400 animate-pulse font-medium">Consultando agenda...</span>
+                      <span className="text-[10px] text-blue-600 dark:text-blue-400 animate-pulse font-medium">Consultando agenda...</span>
                     ) : (
-                      <span className="text-[10px] text-emerald-400 font-semibold">✓ Sem conflitos</span>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">✓ Sem conflitos</span>
                     )}
                   </div>
-                  <p className="text-white font-bold text-xs">
+                  <p className="text-slate-900 dark:text-white font-bold text-xs">
                     {new Date(firstAvailableSlot.deadlineDate.getTime() - 60 * 60 * 1000).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })} das {new Date(firstAvailableSlot.deadlineDate.getTime() - 60 * 60 * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} às {firstAvailableSlot.deadlineDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                   </p>
                   {firstAvailableSlot.collidedEvents.length > 0 && (
-                    <p className="text-[10px] text-amber-300/90">
+                    <p className="text-[10px] text-amber-700 dark:text-amber-300/90 font-medium">
                       ⚡ Pula automaticamente compromisso existente: {firstAvailableSlot.collidedEvents.slice(0, 2).join(', ')}
                     </p>
                   )}
-                  <p className="text-[10px] text-slate-400">
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
                     A tarefa entrará neste horário da sua agenda e uma aba do Google Agenda abrirá para confirmação.
                   </p>
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-3">
+              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setIsNewTaskOpen(false)}
-                  className="px-4 py-2 rounded-lg text-slate-400 hover:text-white transition"
+                  className="px-4 py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-4 py-2 rounded-lg transition"
+                  className="bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-slate-950 font-bold px-4 py-2 rounded-lg transition"
                 >
                   Inserir na Fila
                 </button>
@@ -2285,20 +2412,20 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
       {/* 5. MODAL: ESCALAR PARA GUILHERME */}
       {/* ========================================================================= */}
       {escalateTicketId && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <div className="flex items-center gap-2 text-rose-400">
+        <div className="fixed inset-0 z-50 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2 text-rose-500 dark:text-rose-400">
               <AlertTriangle className="w-5 h-5" />
-              <h3 className="text-base font-bold text-white">Escalar Demanda para Guilherme</h3>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">Escalar Demanda para Guilherme</h3>
             </div>
 
-            <p className="text-xs text-slate-400 leading-relaxed">
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
               O timer do Caio será pausado nesta tarefa e ela entrará na fila do Guilherme com prioridade
               máxima. Descreva brevemente onde você encontrou dificuldade ou qual o erro técnico:
             </p>
 
             <div>
-              <label className="block text-slate-300 font-semibold mb-1 text-xs">
+              <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1 text-xs">
                 Motivo da trava / Erro encontrado:
               </label>
               <textarea
@@ -2306,19 +2433,19 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                 onChange={e => setEscalateReason(e.target.value)}
                 placeholder="Ex: Webhook retornando erro 500 no Supabase ou loop infinito no bot..."
                 rows={3}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs placeholder-slate-600 focus:outline-none focus:border-rose-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white text-xs placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none focus:border-rose-500"
                 autoFocus
               />
             </div>
 
-            <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-3 text-xs">
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-3 text-xs">
               <button
                 type="button"
                 onClick={() => {
                   setEscalateTicketId(null);
                   setEscalateReason('');
                 }}
-                className="px-4 py-2 rounded-lg text-slate-400 hover:text-white transition"
+                className="px-4 py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition"
               >
                 Cancelar
               </button>
@@ -2369,6 +2496,10 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
           setTicketToDetail(null);
           setTicketToTransfer(ticket);
         }}
+        onPostpone={(ticket) => {
+          setTicketToDetail(null);
+          setTicketToPostpone(ticket);
+        }}
         onNotifyWhatsApp={(ticket) => {
           setTicketToNotifyWhatsApp(ticket);
         }}
@@ -2378,6 +2509,13 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
           setTickets(prev => prev.map(t => t.id === updated.id ? updated : t));
           setTicketToDetail(updated);
         }}
+      />
+
+      <PostponeTicketModal
+        isOpen={!!ticketToPostpone}
+        ticket={ticketToPostpone}
+        onClose={() => setTicketToPostpone(null)}
+        onConfirmPostpone={handleSavePostpone}
       />
 
       <TransferTicketModal
