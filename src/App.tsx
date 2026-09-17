@@ -1052,7 +1052,9 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
 
   // Filtros de Colunas Estritamente Isolados e Ordenados por Prioridade e Foco
   const pendingApprovalTickets = useMemo(() => {
-    const list = filteredTickets.filter(t => t.status === 'pending_approval');
+    const list = filteredTickets.filter(
+      t => t.status === 'pending_approval' || (t.status !== 'completed' && t.status !== 'rejected' && !t.approved_at)
+    );
     return [...list].sort((a, b) => {
       const priorityWeight: Record<TicketPriority, number> = { urgente: 1, normal: 2, baixa: 3 };
       const weightA = priorityWeight[a.priority] || 2;
@@ -1067,7 +1069,8 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
   const caioTickets = useMemo(() => {
     const list = filteredTickets.filter(
       t => (isCaio(t.assignee_id, t.assignee_name) || (!isGuilherme(t.assignee_id, t.assignee_name) && !t.assignee_id)) &&
-           t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected'
+           t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected' &&
+           Boolean(t.approved_at)
     );
     return sortQueueTickets(list);
   }, [filteredTickets]);
@@ -1075,7 +1078,8 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
   const guilhermeTickets = useMemo(() => {
     const list = filteredTickets.filter(
       t => isGuilherme(t.assignee_id, t.assignee_name) &&
-           t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected'
+           t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected' &&
+           Boolean(t.approved_at)
     );
     return sortQueueTickets(list);
   }, [filteredTickets]);

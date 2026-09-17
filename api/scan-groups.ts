@@ -370,11 +370,12 @@ Responda EXCLUSIVAMENTE em formato JSON com este schema:
               sla_hours_target: slaHours,
               sla_deadline: deadlineIso,
               assignee_id: assigneeId || null,
-              status: demand.is_followup ? 'paused' : 'pending_approval',
+              status: 'pending_approval',
+              approved_at: null,
               pause_reason: demand.is_followup ? (demand.pause_reason || 'Aguardando ação do cliente/terceiro') : null,
               pause_category: demand.is_followup ? (demand.pause_category || 'aguardando_cliente') : null,
               next_action_by: demand.is_followup ? (demand.next_action_by || 'cliente') : null,
-              paused_at: demand.is_followup ? new Date().toISOString() : null
+              paused_at: null
             });
 
           if (!ticketError) {
