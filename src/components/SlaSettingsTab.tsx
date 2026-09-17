@@ -10,7 +10,10 @@ export const SlaSettingsTab: React.FC = () => {
     low_hours: 72,
     work_start_hour: 9,
     work_end_hour: 18,
-    work_days: '1,2,3,4,5'
+    work_days: '1,2,3,4,5',
+    max_urgent_per_day: 2,
+    max_normal_per_day: 4,
+    max_low_per_day: 6
   });
 
   const [loading, setLoading] = useState(false);
@@ -24,7 +27,13 @@ export const SlaSettingsTab: React.FC = () => {
         const res = await fetch('/api/sla-settings');
         const data = await res.json();
         if (data.settings) {
-          setSettings(data.settings);
+          setSettings(prev => ({
+            ...prev,
+            ...data.settings,
+            max_urgent_per_day: data.settings.max_urgent_per_day ?? 2,
+            max_normal_per_day: data.settings.max_normal_per_day ?? 4,
+            max_low_per_day: data.settings.max_low_per_day ?? 6
+          }));
         }
       } catch (err) {
         console.warn('Usando valores locais de SLA:', err);
@@ -46,7 +55,7 @@ export const SlaSettingsTab: React.FC = () => {
         body: JSON.stringify(settings)
       });
       if (res.ok) {
-        setFeedback('✓ Configurações de SLA salvas com sucesso!');
+        setFeedback('✓ Configurações de SLA e Limites Diários salvas com sucesso!');
         setTimeout(() => setFeedback(null), 4000);
       } else {
         alert('Erro ao salvar configurações.');
@@ -160,6 +169,84 @@ export const SlaSettingsTab: React.FC = () => {
                   className="w-20 px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-sm font-bold text-white text-center focus:outline-none focus:border-slate-500"
                 />
                 <span className="text-xs text-slate-400 font-semibold">horas úteis</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Regulador de Capacidade Diária (WIP Limits por Prioridade) */}
+        <div className="p-6 rounded-2xl bg-[#0d121d] border border-slate-800 space-y-5">
+          <div>
+            <h3 className="font-bold text-sm text-white flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-sky-400" />
+              Regulador de Limite Diário (Capacidade Máxima por Dia)
+            </h3>
+            <p className="text-xs text-slate-400 mt-1">
+              Define o teto de novos chamados absorvidos em um único dia. Ao atingir a cota, o SLA projeta o início automaticamente para o próximo dia útil.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Limite Urgentes */}
+            <div className="p-4 rounded-xl bg-slate-900/80 border border-rose-500/20">
+              <span className="text-xs font-bold text-rose-300 block mb-1">
+                Máx. Urgentes por Dia
+              </span>
+              <p className="text-[11px] text-slate-400 mb-3">
+                Excesso empurra o prazo da nova urgência para o próximo dia útil.
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={settings.max_urgent_per_day ?? 2}
+                  onChange={e => setSettings({ ...settings, max_urgent_per_day: Number(e.target.value) })}
+                  className="w-20 px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-sm font-bold text-white text-center focus:outline-none focus:border-rose-500"
+                />
+                <span className="text-xs text-slate-400 font-semibold">tarefas/dia</span>
+              </div>
+            </div>
+
+            {/* Limite Normais */}
+            <div className="p-4 rounded-xl bg-slate-900/80 border border-amber-500/20">
+              <span className="text-xs font-bold text-amber-300 block mb-1">
+                Máx. Normais por Dia
+              </span>
+              <p className="text-[11px] text-slate-400 mb-3">
+                Cota de demandas padrão absorvidas no mesmo expediente.
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={settings.max_normal_per_day ?? 4}
+                  onChange={e => setSettings({ ...settings, max_normal_per_day: Number(e.target.value) })}
+                  className="w-20 px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-sm font-bold text-white text-center focus:outline-none focus:border-amber-500"
+                />
+                <span className="text-xs text-slate-400 font-semibold">tarefas/dia</span>
+              </div>
+            </div>
+
+            {/* Limite Baixas */}
+            <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-700/60">
+              <span className="text-xs font-bold text-slate-300 block mb-1">
+                Máx. Baixas por Dia
+              </span>
+              <p className="text-[11px] text-slate-400 mb-3">
+                Cota de tarefas de baixa prioridade acomodadas no dia.
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={settings.max_low_per_day ?? 6}
+                  onChange={e => setSettings({ ...settings, max_low_per_day: Number(e.target.value) })}
+                  className="w-20 px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-sm font-bold text-white text-center focus:outline-none focus:border-slate-500"
+                />
+                <span className="text-xs text-slate-400 font-semibold">tarefas/dia</span>
               </div>
             </div>
           </div>

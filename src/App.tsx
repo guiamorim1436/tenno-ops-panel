@@ -16,9 +16,11 @@ import {
   Sliders,
   Users2,
   FileText,
-  Eye
+  Eye,
+  XCircle,
+  RotateCcw
 } from 'lucide-react';
-import { TeamMember, Ticket, TicketPriority, PauseCategory, NextActionBy } from './types';
+import { TeamMember, Ticket, TicketPriority, PauseCategory, NextActionBy, SlaSettings } from './types';
 import { supabase } from './lib/supabase';
 import { PauseTaskModal } from './components/PauseTaskModal';
 import { ApproveTicketModal } from './components/ApproveTicketModal';
@@ -106,8 +108,10 @@ export function App() {
 
   // Estado da UI
   const [viewTab, setViewTab] = useState<'board' | 'telemetry' | 'groups' | 'sla' | 'markdown'>('board');
+  const [rightColumnTab, setRightColumnTab] = useState<'completed' | 'rejected'>('completed');
   const [searchTerm, setSearchTerm] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [slaSettings, setSlaSettings] = useState<SlaSettings | null>(null);
 
   // Modais
   const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
@@ -203,6 +207,21 @@ export function App() {
       }
     }
     loadClientOptions();
+
+    async function loadSlaSettings() {
+      try {
+        const res = await fetch('/api/sla-settings');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.settings) {
+            setSlaSettings(data.settings);
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao carregar SLA settings no App:', err);
+      }
+    }
+    loadSlaSettings();
   }, []);
 
   // Disparo manual do scanner de WhatsApp com IA
@@ -443,13 +462,16 @@ export function App() {
     ticketId: string,
     assignedToId: string,
     sendWhatsApp: boolean,
-    customMessage?: string
+    customMessage?: string,
+    calculatedDeadlineIso?: string
   ) => {
     const targetMember = members.find(m => m.id === assignedToId) || members[1];
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket) return;
 
-    const { hours, deadlineIso } = calculateDeadline(ticket.priority);
+    const defaultCalc = calculateDeadline(ticket.priority);
+    const deadlineIso = calculatedDeadlineIso || defaultCalc.deadlineIso;
+    const hours = ticket.sla_hours_target || defaultCalc.hours;
 
     // Envio automático para o grupo se solicitado
     if (sendWhatsApp && ticket.origin_whatsapp_group_id && customMessage) {
@@ -507,16 +529,19 @@ export function App() {
     }
   };
 
-  // 4b. REJEITAR DEMANDA (sem aprovação)
+  // 4b. REJEITAR DEMANDA (com rastreabilidade e auditoria)
   const handleRejectTicket = async (ticketId: string, reason: string) => {
+    const nowIso = new Date().toISOString();
     setTickets(prev =>
       prev.map(t => {
         if (t.id === ticketId) {
           return {
             ...t,
             status: 'rejected' as const,
+            rejection_reason: reason,
+            rejected_at: nowIso,
             escalation_reason: reason,
-            completed_at: new Date().toISOString()
+            completed_at: nowIso
           };
         }
         return t;
@@ -528,12 +553,48 @@ export function App() {
         .from('tenno_tickets')
         .update({
           status: 'rejected',
+          rejection_reason: reason,
+          rejected_at: nowIso,
           escalation_reason: reason,
-          completed_at: new Date().toISOString()
+          completed_at: nowIso
         })
         .eq('id', ticketId);
     } catch (err) {
       console.warn('Erro ao rejeitar no Supabase:', err);
+    }
+  };
+
+  // 4c. REATIVAR DEMANDA REJEITADA (Retorna para Aprovação)
+  const handleReactivateTicket = async (ticketId: string) => {
+    setTickets(prev =>
+      prev.map(t => {
+        if (t.id === ticketId) {
+          return {
+            ...t,
+            status: 'pending_approval' as const,
+            rejection_reason: undefined,
+            rejected_at: undefined,
+            completed_at: undefined
+          };
+        }
+        return t;
+      })
+    );
+
+    try {
+      await supabase
+        .from('tenno_tickets')
+        .update({
+          status: 'pending_approval',
+          rejection_reason: null,
+          rejected_at: null,
+          completed_at: null
+        })
+        .eq('id', ticketId);
+      setScanFeedback('✨ Demanda reativada com sucesso e movida de volta para a fila de Aprovação!');
+      setTimeout(() => setScanFeedback(null), 4000);
+    } catch (err) {
+      console.warn('Erro ao reativar no Supabase:', err);
     }
   };
 
@@ -692,10 +753,20 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
 
   const completedTickets = useMemo(() => {
     return filteredTickets
-      .filter(t => t.status === 'completed' || t.status === 'rejected')
+      .filter(t => t.status === 'completed')
       .sort((a, b) => {
         const timeA = a.completed_at ? new Date(a.completed_at).getTime() : 0;
         const timeB = b.completed_at ? new Date(b.completed_at).getTime() : 0;
+        return timeB - timeA;
+      });
+  }, [filteredTickets]);
+
+  const rejectedTickets = useMemo(() => {
+    return filteredTickets
+      .filter(t => t.status === 'rejected')
+      .sort((a, b) => {
+        const timeA = a.rejected_at || a.completed_at ? new Date(a.rejected_at || a.completed_at!).getTime() : 0;
+        const timeB = b.rejected_at || b.completed_at ? new Date(b.rejected_at || b.completed_at!).getTime() : 0;
         return timeB - timeA;
       });
   }, [filteredTickets]);
@@ -1385,54 +1456,148 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                 </div>
               </div>
 
-              {/* COLUNA 4: CONCLUÍDOS HOJE */}
+              {/* COLUNA 4: CONCLUÍDOS / REJEITADOS (RASTREABILIDADE) */}
               <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex flex-col min-h-[600px]">
                 <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                    <h3 className="font-bold text-sm text-slate-200">Concluídos Hoje</h3>
+                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                    <button
+                      onClick={() => setRightColumnTab('completed')}
+                      className={`px-2.5 py-1 rounded-md text-xs font-bold transition flex items-center gap-1.5 ${
+                        rightColumnTab === 'completed'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      Concluídos
+                      <span className="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.2 rounded-full">
+                        {completedTickets.length}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setRightColumnTab('rejected')}
+                      className={`px-2.5 py-1 rounded-md text-xs font-bold transition flex items-center gap-1.5 ${
+                        rightColumnTab === 'rejected'
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-rose-500" />
+                      Rejeitados
+                      <span className="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.2 rounded-full">
+                        {rejectedTickets.length}
+                      </span>
+                    </button>
                   </div>
-                  <span className="text-xs bg-slate-800 text-slate-300 font-mono px-2 py-0.5 rounded-full">
-                    {completedTickets.length}
-                  </span>
                 </div>
 
                 <div className="space-y-3 flex-1 overflow-y-auto pr-1">
-                  {completedTickets.length === 0 ? (
-                    <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-600">
-                      Nenhuma demanda concluída ainda hoje.
-                    </div>
-                  ) : (
-                    completedTickets.map(ticket => (
-                      <div
-                        key={ticket.id}
-                        className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-4 space-y-2 opacity-80 hover:opacity-100 transition"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-mono text-slate-500 font-bold">
-                            #{ticket.ticket_code}
-                          </span>
-                          <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded font-semibold flex items-center gap-1">
-                            <Check className="w-3 h-3" />
-                            Finalizado
-                          </span>
-                        </div>
-
-                        <div>
-                          <div className="text-xs text-slate-400 truncate">{ticket.client_name}</div>
-                          <h4 className="text-xs font-medium text-slate-300 line-through">
-                            {ticket.title}
-                          </h4>
-                        </div>
-
-                        <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
-                          <span>Executado por: {ticket.assignee_name}</span>
-                          <span className="font-mono text-slate-300">
-                            ⏱️ {formatHumanTime(ticket.total_time_seconds)}
-                          </span>
-                        </div>
+                  {rightColumnTab === 'completed' ? (
+                    completedTickets.length === 0 ? (
+                      <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-600">
+                        Nenhuma demanda concluída ainda hoje.
                       </div>
-                    ))
+                    ) : (
+                      completedTickets.map(ticket => (
+                        <div
+                          key={ticket.id}
+                          className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-4 space-y-2 opacity-80 hover:opacity-100 transition"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-mono text-slate-500 font-bold">
+                              #{ticket.ticket_code}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setTicketToDetail(ticket)}
+                                className="text-[11px] text-slate-400 hover:text-sky-400 flex items-center gap-1 transition"
+                                title="Ver detalhes completos"
+                              >
+                                <Eye className="w-3 h-3" />
+                              </button>
+                              <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded font-semibold flex items-center gap-1">
+                                <Check className="w-3 h-3" />
+                                Finalizado
+                              </span>
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="text-xs text-slate-400 truncate">{ticket.client_name}</div>
+                            <h4 className="text-xs font-medium text-slate-300 line-through">
+                              {ticket.title}
+                            </h4>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
+                            <span>Executado por: {ticket.assignee_name}</span>
+                            <span className="font-mono text-slate-300">
+                              ⏱️ {formatHumanTime(ticket.total_time_seconds)}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )
+                  ) : (
+                    rejectedTickets.length === 0 ? (
+                      <div className="h-40 flex flex-col items-center justify-center text-center text-xs text-slate-600">
+                        Nenhuma demanda rejeitada registrada.
+                      </div>
+                    ) : (
+                      rejectedTickets.map(ticket => (
+                        <div
+                          key={ticket.id}
+                          className="bg-rose-950/20 border border-rose-900/40 rounded-xl p-4 space-y-2.5 transition"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-mono text-rose-400/80 font-bold">
+                              #{ticket.ticket_code}
+                            </span>
+                            <span className="text-[10px] text-rose-300 bg-rose-500/20 px-2 py-0.5 rounded font-semibold flex items-center gap-1">
+                              <XCircle className="w-3 h-3" />
+                              Rejeitado
+                            </span>
+                          </div>
+
+                          <div>
+                            <div className="text-xs text-slate-400 truncate">{ticket.client_name}</div>
+                            <h4 className="text-xs font-medium text-slate-200">
+                              {ticket.title}
+                            </h4>
+                          </div>
+
+                          {/* Justificativa da Rejeição */}
+                          <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-800/40 text-[11px] space-y-1">
+                            <div className="text-rose-400 font-semibold flex items-center gap-1">
+                              <span>Justificativa da Rejeição:</span>
+                            </div>
+                            <p className="text-slate-300 italic text-[11px] leading-relaxed">
+                              "{ticket.rejection_reason || ticket.escalation_reason || 'Sem justificativa informada'}"
+                            </p>
+                          </div>
+
+                          <div className="pt-2 border-t border-rose-900/40 flex items-center justify-between text-[11px]">
+                            <button
+                              onClick={() => setTicketToDetail(ticket)}
+                              className="text-slate-400 hover:text-white flex items-center gap-1"
+                              title="Ver detalhes da demanda"
+                            >
+                              <Eye className="w-3 h-3" />
+                              <span>Ver Detalhes</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleReactivateTicket(ticket.id)}
+                              className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold px-2 py-1 rounded text-[11px] flex items-center gap-1 transition border border-slate-700 hover:border-slate-600"
+                              title="Mover de volta para a fila de aprovação"
+                            >
+                              <RotateCcw className="w-3 h-3 text-amber-400" />
+                              <span>Reativar</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )
                   )}
                 </div>
               </div>
@@ -1715,8 +1880,11 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
         isOpen={!!ticketToApprove}
         ticket={ticketToApprove}
         members={members}
+        allTickets={tickets}
+        slaSettings={slaSettings || undefined}
         onClose={() => setTicketToApprove(null)}
         onConfirmApproval={handleConfirmApproval}
+        onReject={handleRejectTicket}
       />
 
       <TicketDetailModal

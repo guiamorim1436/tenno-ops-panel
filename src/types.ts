@@ -58,6 +58,10 @@ export interface Ticket {
   pause_category?: PauseCategory;
   next_action_by?: NextActionBy;
   paused_at?: string;
+
+  // Rastreabilidade de Rejeição
+  rejection_reason?: string;
+  rejected_at?: string;
 }
 
 export interface ClientStats {
@@ -88,5 +92,9 @@ export interface SlaSettings {
   work_start_hour: number;
   work_end_hour: number;
   work_days: string;
+  // Regulador de Capacidade Diária (Tarefas Máximas por Dia Útil)
+  max_urgent_per_day?: number;
+  max_normal_per_day?: number;
+  max_low_per_day?: number;
   updated_at?: string;
 }

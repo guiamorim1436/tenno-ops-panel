@@ -11,8 +11,41 @@ const DEFAULT_SLA = {
   low_hours: 72,
   work_start_hour: 9,
   work_end_hour: 18,
-  work_days: '1,2,3,4,5'
+  work_days: '1,2,3,4,5',
+  max_urgent_per_day: 2,
+  max_normal_per_day: 4,
+  max_low_per_day: 6
 };
+
+function parseWorkDaysAndLimits(rawWorkDays?: string) {
+  if (!rawWorkDays) {
+    return {
+      work_days: '1,2,3,4,5',
+      max_urgent_per_day: 2,
+      max_normal_per_day: 4,
+      max_low_per_day: 6
+    };
+  }
+
+  const [daysPart, limitsPart] = rawWorkDays.split('|limits:');
+  let max_urgent = 2;
+  let max_normal = 4;
+  let max_low = 6;
+
+  if (limitsPart) {
+    const numbers = limitsPart.split(',').map(n => Number(n.trim()));
+    if (!isNaN(numbers[0])) max_urgent = numbers[0];
+    if (!isNaN(numbers[1])) max_normal = numbers[1];
+    if (!isNaN(numbers[2])) max_low = numbers[2];
+  }
+
+  return {
+    work_days: daysPart || '1,2,3,4,5',
+    max_urgent_per_day: max_urgent,
+    max_normal_per_day: max_normal,
+    max_low_per_day: max_low
+  };
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
@@ -29,8 +62,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         low_hours,
         work_start_hour,
         work_end_hour,
-        work_days
+        work_days,
+        max_urgent_per_day,
+        max_normal_per_day,
+        max_low_per_day
       } = req.body || {};
+
+      const cleanDays = (work_days || '1,2,3,4,5').split('|')[0];
+      const urgentLim = Number(max_urgent_per_day) || 2;
+      const normalLim = Number(max_normal_per_day) || 4;
+      const lowLim = Number(max_low_per_day) || 6;
+
+      const serializedWorkDays = `${cleanDays}|limits:${urgentLim},${normalLim},${lowLim}`;
 
       const payload = {
         id: 'default',
@@ -39,7 +82,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         low_hours: Number(low_hours) || 72,
         work_start_hour: Number(work_start_hour) || 9,
         work_end_hour: Number(work_end_hour) || 18,
-        work_days: work_days || '1,2,3,4,5',
+        work_days: serializedWorkDays,
         updated_at: new Date().toISOString()
       };
 
@@ -61,7 +104,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const data = await supaRes.json();
-      return res.status(200).json({ success: true, settings: Array.isArray(data) ? data[0] : data });
+      const row = Array.isArray(data) ? data[0] : data;
+      const parsed = parseWorkDaysAndLimits(row?.work_days);
+
+      return res.status(200).json({
+        success: true,
+        settings: {
+          ...row,
+          ...parsed
+        }
+      });
     }
 
     // GET
@@ -78,7 +130,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const data = await supaRes.json();
     if (Array.isArray(data) && data.length > 0) {
-      return res.status(200).json({ success: true, settings: data[0] });
+      const row = data[0];
+      const parsed = parseWorkDaysAndLimits(row?.work_days);
+      return res.status(200).json({
+        success: true,
+        settings: {
+          ...row,
+          ...parsed
+        }
+      });
     }
 
     return res.status(200).json({ success: true, settings: DEFAULT_SLA });
