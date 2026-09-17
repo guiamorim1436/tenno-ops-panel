@@ -1,5 +1,26 @@
 export type MemberRole = 'lider_tecnico' | 'assistente_operacional';
 
+export const GUILHERME_UUID = '59330c17-687d-4bd3-9c7c-0642cb71bf83';
+export const CAIO_UUID = 'e6e19d3e-9365-40f1-b150-8cfa03db0bf1';
+
+export function isGuilherme(assigneeId?: string, assigneeName?: string): boolean {
+  if (!assigneeId && !assigneeName) return false;
+  return (
+    assigneeId === GUILHERME_UUID ||
+    assigneeId === '1' ||
+    (assigneeName?.toLowerCase() || '').includes('guilherme')
+  );
+}
+
+export function isCaio(assigneeId?: string, assigneeName?: string): boolean {
+  if (!assigneeId && !assigneeName) return false;
+  return (
+    assigneeId === CAIO_UUID ||
+    assigneeId === '2' ||
+    (assigneeName?.toLowerCase() || '').includes('caio')
+  );
+}
+
 export interface TeamMember {
   id: string;
   name: string;

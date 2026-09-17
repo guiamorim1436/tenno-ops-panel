@@ -17,25 +17,38 @@ import {
   Users2,
   FileText,
   Eye,
-  XCircle,
-  RotateCcw,
-  LogOut,
-  Send
+  XCircle, 
+  RotateCcw, 
+  LogOut, 
+  Send,
+  ArrowRightLeft
 } from 'lucide-react';
-import { TeamMember, Ticket, TicketPriority, PauseCategory, NextActionBy, SlaSettings } from './types';
+import { 
+  TeamMember, 
+  Ticket, 
+  TicketPriority, 
+  PauseCategory, 
+  NextActionBy, 
+  SlaSettings,
+  GUILHERME_UUID,
+  CAIO_UUID,
+  isGuilherme,
+  isCaio
+} from './types';
 import { supabase } from './lib/supabase';
 import { PauseTaskModal } from './components/PauseTaskModal';
 import { ApproveTicketModal } from './components/ApproveTicketModal';
 import { TicketDetailModal } from './components/TicketDetailModal';
+import { TransferTicketModal } from './components/TransferTicketModal';
 import { GroupsTab } from './components/GroupsTab';
 import { SlaSettingsTab } from './components/SlaSettingsTab';
 import { MarkdownExportTab } from './components/MarkdownExportTab';
 import { LoginScreen, AuthSession } from './components/LoginScreen';
 
-// Mock inicial para funcionar de imediato mesmo sem banco conectado
+// Membros oficiais da TENNO com UUIDs reais do Supabase
 const INITIAL_MEMBERS: TeamMember[] = [
-  { id: '1', name: 'Guilherme', role: 'lider_tecnico' },
-  { id: '2', name: 'Caio', role: 'assistente_operacional' }
+  { id: GUILHERME_UUID, name: 'Guilherme', role: 'lider_tecnico' },
+  { id: CAIO_UUID, name: 'Caio', role: 'assistente_operacional' }
 ];
 
 const INITIAL_TICKETS: Ticket[] = [
@@ -122,7 +135,7 @@ export function App() {
         if (parsed?.memberId) return parsed.memberId;
       } catch {}
     }
-    return '2'; // Padrão Caio
+    return CAIO_UUID; // Padrão Caio
   });
 
   const [tickets, setTickets] = useState<Ticket[]>(() => {
@@ -154,22 +167,27 @@ export function App() {
   const [ticketToPause, setTicketToPause] = useState<Ticket | null>(null);
   const [ticketToApprove, setTicketToApprove] = useState<Ticket | null>(null);
   const [ticketToDetail, setTicketToDetail] = useState<Ticket | null>(null);
+  const [ticketToTransfer, setTicketToTransfer] = useState<Ticket | null>(null);
 
   // Formulário de Nova Tarefa
   const [newTitle, setNewTitle] = useState('');
   const [newClient, setNewClient] = useState('');
   const [newPriority, setNewPriority] = useState<TicketPriority>('normal');
-  const [newAssignee, setNewAssignee] = useState<string>('2');
+  const [newAssignee, setNewAssignee] = useState<string>(CAIO_UUID);
 
   // Identifica o membro ativo
   const currentMember = useMemo(
-    () => members.find(m => m.id === currentMemberId) || members[0],
+    () => members.find(m => m.id === currentMemberId || (isGuilherme(currentMemberId) && isGuilherme(m.id))) || members[1],
     [members, currentMemberId]
   );
 
   // Identifica a tarefa ativa com o timer rodando para este membro
   const activeTicket = useMemo(
-    () => tickets.find(t => t.status === 'in_progress' && t.assignee_id === currentMemberId),
+    () => tickets.find(t => t.status === 'in_progress' && (
+      t.assignee_id === currentMemberId ||
+      (isGuilherme(currentMemberId) && isGuilherme(t.assignee_id, t.assignee_name)) ||
+      (isCaio(currentMemberId) && isCaio(t.assignee_id, t.assignee_name))
+    )),
     [tickets, currentMemberId]
   );
 
@@ -544,7 +562,10 @@ export function App() {
     customMessage?: string,
     calculatedDeadlineIso?: string
   ) => {
-    const targetMember = members.find(m => m.id === assignedToId) || members[1];
+    const isTargetGui = isGuilherme(assignedToId);
+    const targetMemberUuid = isTargetGui ? GUILHERME_UUID : CAIO_UUID;
+    const targetMemberName = isTargetGui ? 'Guilherme' : 'Caio';
+
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket) return;
 
@@ -580,8 +601,8 @@ export function App() {
           return {
             ...t,
             status: 'in_queue',
-            assignee_id: targetMember.id,
-            assignee_name: targetMember.name,
+            assignee_id: targetMemberUuid,
+            assignee_name: targetMemberName,
             sla_hours_target: hours,
             sla_deadline: deadlineIso,
             approved_at: new Date().toISOString()
@@ -596,7 +617,7 @@ export function App() {
         .from('tenno_tickets')
         .update({
           status: 'in_queue',
-          assignee_id: targetMember.id,
+          assignee_id: targetMemberUuid,
           sla_hours_target: hours,
           sla_deadline: deadlineIso,
           approved_at: new Date().toISOString()
@@ -608,6 +629,81 @@ export function App() {
       }
     } catch (err) {
       console.warn('Erro ao aprovar no Supabase:', err);
+    }
+  };
+
+  // 4d. TRANSFERIR DEMANDA ENTRE MEMBROS DA EQUIPE
+  const handleTransferTicket = async (
+    ticketId: string,
+    targetMemberId: string,
+    reason?: string
+  ) => {
+    const isTargetGui = isGuilherme(targetMemberId);
+    const resolvedTargetUuid = isTargetGui ? GUILHERME_UUID : CAIO_UUID;
+    const resolvedTargetName = isTargetGui ? 'Guilherme' : 'Caio';
+
+    const ticket = tickets.find(t => t.id === ticketId);
+    if (!ticket) return;
+
+    const timestamp = new Date().toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    let updatedDesc = ticket.description || '';
+    if (reason) {
+      const noteLine = `• [${timestamp} - ${currentMember.name}]: Demanda transferida para ${resolvedTargetName}. Motivo: ${reason}`;
+      const marker = '--- Contexto & Notas da Equipe ---';
+      if (updatedDesc.includes(marker)) {
+        updatedDesc = updatedDesc.replace(marker, `${marker}\n${noteLine}`);
+      } else {
+        updatedDesc = `${updatedDesc}\n\n${marker}\n${noteLine}`.trim();
+      }
+    }
+
+    const nextStatus = ticket.status === 'in_progress' ? 'in_queue' : ticket.status;
+
+    setTickets(prev =>
+      prev.map(t => {
+        if (t.id === ticketId) {
+          return {
+            ...t,
+            assignee_id: resolvedTargetUuid,
+            assignee_name: resolvedTargetName,
+            description: updatedDesc,
+            is_escalated: false,
+            status: nextStatus
+          };
+        }
+        return t;
+      })
+    );
+
+    try {
+      const updatePayload: any = {
+        assignee_id: resolvedTargetUuid,
+        is_escalated: false,
+        status: nextStatus
+      };
+      if (reason) {
+        updatePayload.description = updatedDesc;
+      }
+
+      const { error } = await supabase
+        .from('tenno_tickets')
+        .update(updatePayload)
+        .eq('id', ticketId);
+
+      if (error) {
+        console.error('Erro ao transferir no Supabase:', error);
+      } else {
+        setScanFeedback(`✨ Demanda transferida com sucesso para ${resolvedTargetName}!`);
+        setTimeout(() => setScanFeedback(null), 4000);
+      }
+    } catch (err) {
+      console.warn('Erro ao transferir no Supabase:', err);
     }
   };
 
@@ -830,14 +926,16 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
 
   const caioTickets = useMemo(() => {
     const list = filteredTickets.filter(
-      t => t.assignee_id === '2' && t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected'
+      t => (isCaio(t.assignee_id, t.assignee_name) || (!isGuilherme(t.assignee_id, t.assignee_name) && !t.assignee_id)) &&
+           t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected'
     );
     return sortQueueTickets(list);
   }, [filteredTickets]);
 
   const guilhermeTickets = useMemo(() => {
     const list = filteredTickets.filter(
-      t => t.assignee_id === '1' && t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected'
+      t => isGuilherme(t.assignee_id, t.assignee_name) &&
+           t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected'
     );
     return sortQueueTickets(list);
   }, [filteredTickets]);
@@ -1370,10 +1468,20 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                               </button>
                             )}
 
+                            {/* Botão de Transferir */}
+                            <button
+                              onClick={() => setTicketToTransfer(ticket)}
+                              className="bg-slate-800 hover:bg-indigo-950/60 hover:text-indigo-300 text-slate-400 border border-slate-700 hover:border-indigo-500/40 px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition"
+                              title="Transferir demanda para outro membro da equipe"
+                            >
+                              <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-400" />
+                              <span className="hidden sm:inline">Transferir</span>
+                            </button>
+
                             {/* Botão de Escalonamento */}
                             <button
                               onClick={() => setEscalateTicketId(ticket.id)}
-                              className="bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 text-slate-400 border border-slate-700 hover:border-rose-500/40 px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition"
+                              className="bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 text-slate-400 border border-slate-700 hover:border-rose-500/40 px-2 py-1.5 rounded-lg text-xs flex items-center gap-1 transition"
                               title="Travei num bug: passar para Guilherme"
                             >
                               <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
@@ -1560,6 +1668,16 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                                 Assumir Foco
                               </button>
                             )}
+
+                            {/* Botão de Transferir */}
+                            <button
+                              onClick={() => setTicketToTransfer(ticket)}
+                              className="bg-slate-800 hover:bg-indigo-950/60 hover:text-indigo-300 text-slate-400 border border-slate-700 hover:border-indigo-500/40 px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition"
+                              title="Transferir demanda para Caio ou outro responsável"
+                            >
+                              <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-400" />
+                              <span className="hidden sm:inline">Transferir</span>
+                            </button>
 
                             <button
                               onClick={() => handleCompleteTask(ticket.id)}
@@ -2017,11 +2135,22 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
           setTicketToDetail(null);
           setTicketToApprove(ticket);
         }}
+        onTransfer={(ticket) => {
+          setTicketToDetail(null);
+          setTicketToTransfer(ticket);
+        }}
         onReject={handleRejectTicket}
         onUpdateTicket={(updated) => {
           setTickets(prev => prev.map(t => t.id === updated.id ? updated : t));
           setTicketToDetail(updated);
         }}
+      />
+
+      <TransferTicketModal
+        isOpen={!!ticketToTransfer}
+        ticket={ticketToTransfer}
+        onClose={() => setTicketToTransfer(null)}
+        onConfirmTransfer={handleTransferTicket}
       />
     </div>
   );

@@ -12,7 +12,8 @@ import {
   Edit3, 
   Save, 
   Send,
-  Check
+  Check,
+  ArrowRightLeft
 } from 'lucide-react';
 import { Ticket } from '../types';
 import { supabase } from '../lib/supabase';
@@ -24,6 +25,7 @@ interface TicketDetailModalProps {
   onClose: () => void;
   onApprove?: (ticket: Ticket) => void;
   onReject?: (ticketId: string, reason: string) => void;
+  onTransfer?: (ticket: Ticket) => void;
   onUpdateTicket?: (updatedTicket: Ticket) => void;
 }
 
@@ -34,6 +36,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
   onClose,
   onApprove,
   onReject,
+  onTransfer,
   onUpdateTicket
 }) => {
   const [showRejectForm, setShowRejectForm] = useState(false);
@@ -441,13 +444,28 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               </button>
             </>
           ) : (
-            <div className="flex items-center justify-end w-full">
-              <button
-                onClick={onClose}
-                className="px-5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition"
-              >
-                Fechar
-              </button>
+            <div className="flex items-center justify-between w-full">
+              {ticket.status !== 'completed' && ticket.status !== 'rejected' && onTransfer && (
+                <button
+                  onClick={() => {
+                    onClose();
+                    onTransfer(ticket);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-indigo-500/20 hover:bg-indigo-500 text-indigo-300 hover:text-white border border-indigo-500/30 text-xs font-semibold transition flex items-center gap-1.5"
+                  title="Transferir esta tarefa para outro membro da equipe"
+                >
+                  <ArrowRightLeft className="w-3.5 h-3.5" />
+                  <span>Transferir Demanda</span>
+                </button>
+              )}
+              <div className="flex items-center gap-2 ml-auto">
+                <button
+                  onClick={onClose}
+                  className="px-5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition"
+                >
+                  Fechar
+                </button>
+              </div>
             </div>
           )}
         </div>
