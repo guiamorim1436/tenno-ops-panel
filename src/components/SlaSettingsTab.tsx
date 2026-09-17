@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, ShieldCheck, Save, Calendar, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Clock, ShieldCheck, Save, Calendar, AlertTriangle, CheckCircle2, Send, MessageSquare } from 'lucide-react';
 import { SlaSettings } from '../types';
 
 export const SlaSettingsTab: React.FC = () => {
@@ -13,12 +13,17 @@ export const SlaSettingsTab: React.FC = () => {
     work_days: '1,2,3,4,5',
     max_urgent_per_day: 2,
     max_normal_per_day: 4,
-    max_low_per_day: 6
+    max_low_per_day: 6,
+    ical_url_guilherme: 'https://calendar.google.com/calendar/ical/guilherme.amorimcrm%40gmail.com/private-9ae6d607f38a10d5f7eaa414afc48a8a/basic.ics',
+    ical_url_caio: '',
+    daily_report_group_jid: '120363427677526608@g.us'
   });
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [isTestingReport, setIsTestingReport] = useState(false);
+  const [reportFeedback, setReportFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadSettings() {
@@ -64,6 +69,25 @@ export const SlaSettingsTab: React.FC = () => {
       alert(`Erro: ${err.message}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTestReport = async () => {
+    setIsTestingReport(true);
+    setReportFeedback(null);
+    try {
+      const res = await fetch('/api/daily-report?force=true', { method: 'POST' });
+      const data = await res.json();
+      if (data.success && data.message_sent) {
+        setReportFeedback(`✓ Relatório Diário consolidado disparado com sucesso para o grupo Relatórios Diários!`);
+      } else {
+        setReportFeedback(`⚠️ Relatório gerado, mas houve aviso no WhatsApp: ${data.error || 'Verifique o grupo'}`);
+      }
+    } catch (err: any) {
+      setReportFeedback(`❌ Erro ao disparar relatório: ${err.message}`);
+    } finally {
+      setIsTestingReport(false);
+      setTimeout(() => setReportFeedback(null), 6000);
     }
   };
 
@@ -303,11 +327,100 @@ export const SlaSettingsTab: React.FC = () => {
           </div>
         </div>
 
+        {/* Google Agenda & Sincronização iCal */}
+        <div className="p-6 rounded-2xl bg-[#0d121d] border border-slate-800 space-y-5">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-sm text-white flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-sky-400" />
+              Sincronização com Google Agenda (iCal)
+            </h3>
+            <span className="text-[10px] bg-sky-500/10 text-sky-300 border border-sky-500/20 px-2 py-0.5 rounded font-medium">
+              1h / Demanda • Pula Reuniões
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Cada tarefa aprovada consome <strong>1 hora</strong> do dia do responsável. Caso o horário colida com eventos e reuniões da Google Agenda, o sistema avança automaticamente para o próximo intervalo vago no horário útil comercial.
+          </p>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Link da Google Agenda Privada (iCal) — Guilherme:
+              </label>
+              <input
+                type="text"
+                value={settings.ical_url_guilherme || ''}
+                readOnly
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs font-mono text-slate-400 focus:outline-none cursor-not-allowed"
+              />
+              <span className="text-[10px] text-emerald-400 mt-1 block">
+                ✓ Agenda do Guilherme vinculada e sincronizada ativamente.
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Link da Google Agenda Privada (iCal) — Caio:
+              </label>
+              <input
+                type="text"
+                placeholder="Cole aqui a URL privada .ics da agenda do Caio quando disponível..."
+                value={settings.ical_url_caio || ''}
+                onChange={e => setSettings({ ...settings, ical_url_caio: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-sky-500"
+              />
+              <span className="text-[10px] text-slate-500 mt-1 block">
+                Assim que preenchido, a fila de demandas do Caio também respeitará automaticamente os compromissos da agenda dele.
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Relatório Diário Automático no WhatsApp */}
+        <div className="p-6 rounded-2xl bg-[#0d121d] border border-slate-800 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-sm text-white flex items-center gap-2">
+              <MessageSquare className="w-4 h-4 text-emerald-400" />
+              Relatório Diário Automático no WhatsApp
+            </h3>
+            <span className="text-[10px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 px-2 py-0.5 rounded font-medium">
+              30 min antes do fim do expediente ({settings.work_end_hour - 1}:30)
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Consolidação diária enviada automaticamente no grupo <strong>Relatórios Diários</strong> com todas as demandas finalizadas no dia, o que ficou pendente para amanhã e o tempo total de foco trabalhado por Guilherme e por Caio.
+          </p>
+
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+            <div>
+              <span className="text-slate-400 block text-[11px]">Grupo WhatsApp de Destino:</span>
+              <span className="font-bold text-white font-mono">Relatórios Diários (120363427677526608@g.us)</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleTestReport}
+              disabled={isTestingReport}
+              className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-emerald-400 border border-slate-800 hover:border-emerald-500/40 font-semibold flex items-center gap-1.5 transition"
+            >
+              <Send className={`w-3.5 h-3.5 ${isTestingReport ? 'animate-pulse' : ''}`} />
+              <span>{isTestingReport ? 'Disparando...' : 'Testar Envio Agora'}</span>
+            </button>
+          </div>
+
+          {reportFeedback && (
+            <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs animate-fadeIn">
+              {reportFeedback}
+            </div>
+          )}
+        </div>
+
         <div className="flex justify-end">
           <button
             type="submit"
             disabled={saving || loading}
-            className="px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition shadow-lg shadow-emerald-500/20 flex items-center gap-2"
+            className="px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition shadow-lg shadow-emerald-500/20 flex items-center gap-2 cursor-pointer"
           >
             <Save className="w-4 h-4" />
             <span>{saving ? 'Salvando...' : 'Salvar Configurações de SLA'}</span>

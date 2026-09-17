@@ -17,33 +17,54 @@ const DEFAULT_SLA = {
   max_low_per_day: 6
 };
 
+const DEFAULT_ICAL_GUILHERME = 
+  'https://calendar.google.com/calendar/ical/guilherme.amorimcrm%40gmail.com/private-9ae6d607f38a10d5f7eaa414afc48a8a/basic.ics';
+const DEFAULT_REPORT_GROUP = '120363427677526608@g.us';
+
 function parseWorkDaysAndLimits(rawWorkDays?: string) {
   if (!rawWorkDays) {
     return {
       work_days: '1,2,3,4,5',
       max_urgent_per_day: 2,
       max_normal_per_day: 4,
-      max_low_per_day: 6
+      max_low_per_day: 6,
+      ical_url_guilherme: DEFAULT_ICAL_GUILHERME,
+      ical_url_caio: '',
+      daily_report_group_jid: DEFAULT_REPORT_GROUP
     };
   }
 
-  const [daysPart, limitsPart] = rawWorkDays.split('|limits:');
+  const [daysPart, rest] = rawWorkDays.split('|limits:');
   let max_urgent = 2;
   let max_normal = 4;
   let max_low = 6;
+  let ical_caio = '';
 
-  if (limitsPart) {
-    const numbers = limitsPart.split(',').map(n => Number(n.trim()));
-    if (!isNaN(numbers[0])) max_urgent = numbers[0];
-    if (!isNaN(numbers[1])) max_normal = numbers[1];
-    if (!isNaN(numbers[2])) max_low = numbers[2];
+  if (rest) {
+    const [limitsPart, caioPart] = rest.split('|caio:');
+    if (limitsPart) {
+      const numbers = limitsPart.split(',').map(n => Number(n.trim()));
+      if (!isNaN(numbers[0])) max_urgent = numbers[0];
+      if (!isNaN(numbers[1])) max_normal = numbers[1];
+      if (!isNaN(numbers[2])) max_low = numbers[2];
+    }
+    if (caioPart) {
+      try {
+        ical_caio = decodeURIComponent(caioPart.trim());
+      } catch {
+        ical_caio = caioPart.trim();
+      }
+    }
   }
 
   return {
     work_days: daysPart || '1,2,3,4,5',
     max_urgent_per_day: max_urgent,
     max_normal_per_day: max_normal,
-    max_low_per_day: max_low
+    max_low_per_day: max_low,
+    ical_url_guilherme: DEFAULT_ICAL_GUILHERME,
+    ical_url_caio: ical_caio,
+    daily_report_group_jid: DEFAULT_REPORT_GROUP
   };
 }
 
@@ -65,15 +86,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         work_days,
         max_urgent_per_day,
         max_normal_per_day,
-        max_low_per_day
+        max_low_per_day,
+        ical_url_caio
       } = req.body || {};
 
       const cleanDays = (work_days || '1,2,3,4,5').split('|')[0];
       const urgentLim = Number(max_urgent_per_day) || 2;
       const normalLim = Number(max_normal_per_day) || 4;
       const lowLim = Number(max_low_per_day) || 6;
+      const caioIcalEnc = encodeURIComponent((ical_url_caio || '').trim());
 
-      const serializedWorkDays = `${cleanDays}|limits:${urgentLim},${normalLim},${lowLim}`;
+      const serializedWorkDays = `${cleanDays}|limits:${urgentLim},${normalLim},${lowLim}|caio:${caioIcalEnc}`;
 
       const payload = {
         id: 'default',

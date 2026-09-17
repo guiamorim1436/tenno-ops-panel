@@ -96,5 +96,9 @@ export interface SlaSettings {
   max_urgent_per_day?: number;
   max_normal_per_day?: number;
   max_low_per_day?: number;
+  // Integração Google Agenda (iCal)
+  ical_url_guilherme?: string;
+  ical_url_caio?: string;
+  daily_report_group_jid?: string;
   updated_at?: string;
 }

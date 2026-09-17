@@ -18,7 +18,9 @@ import {
   FileText,
   Eye,
   XCircle,
-  RotateCcw
+  RotateCcw,
+  LogOut,
+  Send
 } from 'lucide-react';
 import { TeamMember, Ticket, TicketPriority, PauseCategory, NextActionBy, SlaSettings } from './types';
 import { supabase } from './lib/supabase';
@@ -28,6 +30,7 @@ import { TicketDetailModal } from './components/TicketDetailModal';
 import { GroupsTab } from './components/GroupsTab';
 import { SlaSettingsTab } from './components/SlaSettingsTab';
 import { MarkdownExportTab } from './components/MarkdownExportTab';
+import { LoginScreen, AuthSession } from './components/LoginScreen';
 
 // Mock inicial para funcionar de imediato mesmo sem banco conectado
 const INITIAL_MEMBERS: TeamMember[] = [
@@ -98,13 +101,44 @@ const INITIAL_TICKETS: Ticket[] = [
 ];
 
 export function App() {
+  // Sessão de Autenticação Simplificada
+  const [currentUser, setCurrentUser] = useState<AuthSession | null>(() => {
+    const saved = localStorage.getItem('tenno_user_session');
+    if (!saved) return null;
+    try {
+      return JSON.parse(saved);
+    } catch {
+      return null;
+    }
+  });
+
   // Estado de dados
   const [members] = useState<TeamMember[]>(INITIAL_MEMBERS);
-  const [currentMemberId, setCurrentMemberId] = useState<string>('2'); // Inicia com Caio por padrão
+  const [currentMemberId, setCurrentMemberId] = useState<string>(() => {
+    const saved = localStorage.getItem('tenno_user_session');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed?.memberId) return parsed.memberId;
+      } catch {}
+    }
+    return '2'; // Padrão Caio
+  });
+
   const [tickets, setTickets] = useState<Ticket[]>(() => {
     const saved = localStorage.getItem('tenno_tickets_v1');
     return saved ? JSON.parse(saved) : INITIAL_TICKETS;
   });
+
+  const handleLoginSuccess = (session: AuthSession) => {
+    setCurrentUser(session);
+    setCurrentMemberId(session.memberId);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('tenno_user_session');
+    setCurrentUser(null);
+  };
 
   // Estado da UI
   const [viewTab, setViewTab] = useState<'board' | 'telemetry' | 'groups' | 'sla' | 'markdown'>('board');
@@ -245,6 +279,27 @@ export function App() {
       setScanFeedback(`⚠️ Erro ao escanear: ${err.message || 'Falha na conexão'}`);
     } finally {
       setIsScanning(false);
+      setTimeout(() => setScanFeedback(null), 6000);
+    }
+  };
+
+  // Disparo manual do relatório diário para o WhatsApp
+  const [isSendingReport, setIsSendingReport] = useState(false);
+
+  const handleSendDailyReport = async () => {
+    setIsSendingReport(true);
+    try {
+      const res = await fetch('/api/daily-report?force=true', { method: 'POST' });
+      const data = await res.json();
+      if (data.success && data.message_sent) {
+        setScanFeedback(`📊 Relatório Diário enviado com sucesso no grupo Relatórios Diários!`);
+      } else {
+        setScanFeedback(`⚠️ Relatório gerado, mas houve aviso no envio: ${data.error || 'Verifique o WhatsApp'}`);
+      }
+    } catch (err: any) {
+      setScanFeedback(`❌ Erro ao enviar relatório diário: ${err.message}`);
+    } finally {
+      setIsSendingReport(false);
       setTimeout(() => setScanFeedback(null), 6000);
     }
   };
@@ -808,6 +863,10 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
     };
   }, [tickets]);
 
+  if (!currentUser) {
+    return <LoginScreen onLoginSuccess={handleLoginSuccess} members={members} />;
+  }
+
   return (
     <div className="min-h-screen bg-[#0a0d14] text-slate-100 flex flex-col font-sans">
       {/* ========================================================================= */}
@@ -968,12 +1027,38 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
             </button>
 
             <button
+              onClick={handleSendDailyReport}
+              disabled={isSendingReport}
+              className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 transition border border-slate-800 hover:border-emerald-500/40 shadow-sm"
+              title="Disparar relatório diário consolidado para o grupo Relatórios Diários no WhatsApp"
+            >
+              <Send className={`w-3.5 h-3.5 text-emerald-400 ${isSendingReport ? 'animate-pulse' : ''}`} />
+              <span className="hidden sm:inline">{isSendingReport ? 'Enviando...' : 'Relatório Diário'}</span>
+            </button>
+
+            <button
               onClick={() => setIsNewTaskOpen(true)}
               className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition shadow-sm"
             >
               <Plus className="w-4 h-4" />
               Nova Demanda
             </button>
+
+            {/* Usuário Logado & Logout */}
+            <div className="flex items-center gap-2.5 pl-2.5 border-l border-slate-800">
+              <div className="text-right hidden xl:block">
+                <p className="text-xs font-bold text-white leading-tight">{currentUser.name}</p>
+                <p className="text-[10px] text-emerald-400 font-medium">{currentUser.role}</p>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="bg-slate-900 hover:bg-rose-950/60 hover:text-rose-300 border border-slate-800 hover:border-rose-800/60 text-slate-400 text-xs px-2.5 py-2 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                title="Desconectar da sessão operacional"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Sair</span>
+              </button>
+            </div>
           </div>
         </div>
       </header>

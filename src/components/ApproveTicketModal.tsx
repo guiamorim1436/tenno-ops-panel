@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   CheckCircle2, 
   MessageSquare, 
@@ -10,9 +10,11 @@ import {
   XCircle, 
   AlertTriangle,
   Clock,
-  Layers
+  Layers,
+  Calendar
 } from 'lucide-react';
 import { Ticket, TeamMember, SlaSettings } from '../types';
+import { calculateCalendarAwareDeadline, CalendarBusyEvent } from '../lib/calendarSchedule';
 
 interface ApproveTicketModalProps {
   isOpen: boolean;
@@ -29,48 +31,6 @@ interface ApproveTicketModalProps {
     calculatedDeadlineIso?: string
   ) => Promise<void>;
   onReject?: (ticketId: string, reason: string) => void;
-}
-
-// Função auxiliar para projetar horas comerciais úteis (09h às 18h, seg-sex)
-function addBusinessHours(startDate: Date, businessHours: number, startHour = 9, endHour = 18): Date {
-  const date = new Date(startDate.getTime());
-  let remaining = businessHours;
-
-  while (remaining > 0) {
-    const dow = date.getDay();
-    if (dow === 0) { // Domingo -> Segunda
-      date.setDate(date.getDate() + 1);
-      date.setHours(startHour, 0, 0, 0);
-      continue;
-    }
-    if (dow === 6) { // Sábado -> Segunda
-      date.setDate(date.getDate() + 2);
-      date.setHours(startHour, 0, 0, 0);
-      continue;
-    }
-
-    const curH = date.getHours() + date.getMinutes() / 60;
-    if (curH < startHour) {
-      date.setHours(startHour, 0, 0, 0);
-      continue;
-    }
-    if (curH >= endHour) {
-      date.setDate(date.getDate() + 1);
-      date.setHours(startHour, 0, 0, 0);
-      continue;
-    }
-
-    const leftToday = endHour - curH;
-    if (remaining <= leftToday) {
-      date.setTime(date.getTime() + remaining * 3600 * 1000);
-      remaining = 0;
-    } else {
-      remaining -= leftToday;
-      date.setDate(date.getDate() + 1);
-      date.setHours(startHour, 0, 0, 0);
-    }
-  }
-  return date;
 }
 
 export const ApproveTicketModal: React.FC<ApproveTicketModalProps> = ({
@@ -90,13 +50,44 @@ export const ApproveTicketModal: React.FC<ApproveTicketModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showRejectForm, setShowRejectForm] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [calendarEvents, setCalendarEvents] = useState<CalendarBusyEvent[]>([]);
+  const [isLoadingCalendar, setIsLoadingCalendar] = useState(false);
 
   const selectedMember = members.find(m => m.id === assigneeId) || members[1];
 
-  // Cálculo da posição na fila e previsão de entrega baseada na fila do responsável
+  // Carrega eventos da Google Agenda do membro selecionado
+  useEffect(() => {
+    let isMounted = true;
+    async function loadCalendar() {
+      setIsLoadingCalendar(true);
+      try {
+        const res = await fetch(`/api/calendar-events?memberId=${assigneeId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && Array.isArray(data.events)) {
+            setCalendarEvents(data.events);
+          }
+        }
+      } catch (err) {
+        console.warn('Falha ao carregar eventos da agenda:', err);
+      } finally {
+        if (isMounted) setIsLoadingCalendar(false);
+      }
+    }
+    loadCalendar();
+    return () => { isMounted = false; };
+  }, [assigneeId]);
+
+  // Cálculo da posição na fila e previsão de entrega baseada na fila e Google Agenda (1h por demanda)
   const queueCalculation = useMemo(() => {
     const startH = slaSettings?.work_start_hour ?? 9;
     const endH = slaSettings?.work_end_hour ?? 18;
+    const rawDays = slaSettings?.work_days ?? '1,2,3,4,5';
+    const workDays = typeof rawDays === 'string'
+      ? rawDays.split('|')[0].split(',').map(n => Number(n.trim())).filter(n => !isNaN(n))
+      : Array.isArray(rawDays)
+      ? (rawDays as number[])
+      : [1, 2, 3, 4, 5];
 
     // Tarefas que já estão com o responsável selecionado
     const memberQueue = allTickets.filter(
@@ -115,41 +106,37 @@ export const ApproveTicketModal: React.FC<ApproveTicketModalProps> = ({
       const inProgress = memberQueue.find(t => t.status === 'in_progress');
       if (inProgress) {
         queuePosition = 2;
-        queueWaitHours = 2; // estimativa média de término da tarefa ativa
+        queueWaitHours = 1; // 1h da tarefa em andamento
       } else {
         queuePosition = 1;
         queueWaitHours = 0;
       }
     } else {
-      // Normal ou Baixa: vai para o final da fila de espera
+      // Normal ou Baixa: vai para o final da fila de espera (1h por tarefa à frente)
       queuePosition = memberQueue.length + 1;
-      // Soma horas estimadas das tarefas à frente
-      for (const t of memberQueue) {
-        queueWaitHours += t.priority === 'urgente' ? 3 : 2;
-      }
+      queueWaitHours = memberQueue.length * 1;
     }
 
-    const slaHours = ticket.sla_hours_target || (ticket.priority === 'urgente' ? 4 : ticket.priority === 'normal' ? 24 : 72);
-    const totalProjectedHours = queueWaitHours + slaHours;
-    const deadlineDate = addBusinessHours(new Date(), totalProjectedHours, startH, endH);
-
-    const formattedDeadline = deadlineDate.toLocaleDateString('pt-BR', {
-      weekday: 'short',
-      day: '2-digit',
-      month: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
+    // Calcula prazo final considerando horário útil, blocos de 1h e eventos do Google Calendar
+    const schedule = calculateCalendarAwareDeadline({
+      startDate: new Date(),
+      durationHours: 1, // 1h para a tarefa atual
+      queueHours: queueWaitHours,
+      calendarEvents,
+      startHour: startH,
+      endHour: endH,
+      workDays
     });
 
     return {
       queuePosition,
       queueWaitHours,
-      slaHours,
-      totalProjectedHours,
-      deadlineIso: deadlineDate.toISOString(),
-      formattedDeadline
+      totalProjectedHours: queueWaitHours + 1,
+      deadlineIso: schedule.deadlineIso,
+      formattedDeadline: schedule.formatted,
+      collidedEvents: schedule.collidedEvents
     };
-  }, [ticket, assigneeId, allTickets, slaSettings]);
+  }, [ticket, assigneeId, allTickets, slaSettings, calendarEvents]);
 
   // Mensagem padrão formatada com a previsão de acordo com a fila
   const defaultMessage = useMemo(() => {
@@ -285,24 +272,50 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
             </div>
           </div>
 
-          {/* Projeção de Fila & Previsão Calculada */}
-          <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-sky-400" />
-              <div>
-                <span className="text-[11px] text-slate-400 block">Posição na Fila de {selectedMember.name}:</span>
-                <span className="font-bold text-white">
-                  {queueCalculation.queuePosition}º lugar {ticket.priority === 'urgente' && '(Fura-fila Urgente)'}
+          {/* Projeção de Fila & Previsão Calculada com Google Agenda */}
+          <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2 text-xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-sky-400" />
+                <div>
+                  <span className="text-[11px] text-slate-400 block">Posição na Fila de {selectedMember.name}:</span>
+                  <span className="font-bold text-white">
+                    {queueCalculation.queuePosition}º lugar {ticket.priority === 'urgente' && '(Fura-fila Urgente)'}
+                  </span>
+                </div>
+              </div>
+              <div className="text-right">
+                <span className="text-[11px] text-slate-400 block flex items-center justify-end gap-1">
+                  <Clock className="w-3 h-3 text-amber-400" /> Previsão de Entrega (1h/tarefa):
+                </span>
+                <span className="font-bold text-emerald-400 font-mono">
+                  {queueCalculation.formattedDeadline}
                 </span>
               </div>
             </div>
-            <div className="text-right">
-              <span className="text-[11px] text-slate-400 block flex items-center justify-end gap-1">
-                <Clock className="w-3 h-3 text-amber-400" /> Previsão de Entrega:
-              </span>
-              <span className="font-bold text-emerald-400 font-mono">
-                {queueCalculation.formattedDeadline}
-              </span>
+
+            {/* Status da Google Agenda */}
+            <div className="pt-2 border-t border-slate-850 flex items-center justify-between text-[11px]">
+              <div className="flex items-center gap-1.5 text-slate-400">
+                <Calendar className="w-3.5 h-3.5 text-sky-400" />
+                <span>
+                  {isLoadingCalendar ? (
+                    'Sincronizando Google Agenda...'
+                  ) : calendarEvents.length > 0 ? (
+                    <span className="text-sky-300">
+                      Google Agenda ativa ({calendarEvents.length} eventos/reuniões monitorados)
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">Nenhum evento na agenda no período</span>
+                  )}
+                </span>
+              </div>
+
+              {queueCalculation.collidedEvents.length > 0 && (
+                <span className="text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/20 px-2 py-0.5 rounded font-medium">
+                  ⚠️ Evitou {queueCalculation.collidedEvents.length} reunião(ões)
+                </span>
+              )}
             </div>
           </div>
 
