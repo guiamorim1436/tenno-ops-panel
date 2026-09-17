@@ -1121,23 +1121,33 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                                 )}
                               </strong>
                             </span>
-                            <button
-                              onClick={() => copyWhatsAppMessage(ticket)}
-                              className="text-[11px] text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition"
-                              title="Copiar mensagem formatada para WhatsApp"
-                            >
-                              {copiedId === ticket.id ? (
-                                <>
-                                  <Check className="w-3 h-3 text-emerald-400" />
-                                  <span className="text-emerald-400">Copiado!</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Copy className="w-3 h-3" />
-                                  <span>WhatsApp</span>
-                                </>
-                              )}
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setTicketToDetail(ticket)}
+                                className="text-[11px] text-slate-400 hover:text-sky-400 flex items-center gap-1 transition"
+                                title="Ver detalhes completos e adicionar comentários de contexto"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>Detalhes</span>
+                              </button>
+                              <button
+                                onClick={() => copyWhatsAppMessage(ticket)}
+                                className="text-[11px] text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition"
+                                title="Copiar mensagem formatada para WhatsApp"
+                              >
+                                {copiedId === ticket.id ? (
+                                  <>
+                                    <Check className="w-3 h-3 text-emerald-400" />
+                                    <span className="text-emerald-400">Copiado!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3 h-3" />
+                                    <span>WhatsApp</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           </div>
 
                           {/* Botões de Ação do Card */}
@@ -1303,22 +1313,33 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                                 )}
                               </strong>
                             </span>
-                            <button
-                              onClick={() => copyWhatsAppMessage(ticket)}
-                              className="text-[11px] text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition"
-                            >
-                              {copiedId === ticket.id ? (
-                                <>
-                                  <Check className="w-3 h-3 text-emerald-400" />
-                                  <span className="text-emerald-400">Copiado!</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Copy className="w-3 h-3" />
-                                  <span>WhatsApp</span>
-                                </>
-                              )}
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setTicketToDetail(ticket)}
+                                className="text-[11px] text-slate-400 hover:text-sky-400 flex items-center gap-1 transition"
+                                title="Ver detalhes completos e adicionar comentários de contexto"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>Detalhes</span>
+                              </button>
+                              <button
+                                onClick={() => copyWhatsAppMessage(ticket)}
+                                className="text-[11px] text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition"
+                                title="Copiar mensagem formatada para WhatsApp"
+                              >
+                                {copiedId === ticket.id ? (
+                                  <>
+                                    <Check className="w-3 h-3 text-emerald-400" />
+                                    <span className="text-emerald-400">Copiado!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3 h-3" />
+                                    <span>WhatsApp</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           </div>
 
                           <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
@@ -1701,12 +1722,17 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
       <TicketDetailModal
         isOpen={!!ticketToDetail}
         ticket={ticketToDetail}
+        currentMemberName={currentMember.name}
         onClose={() => setTicketToDetail(null)}
         onApprove={(ticket) => {
           setTicketToDetail(null);
           setTicketToApprove(ticket);
         }}
         onReject={handleRejectTicket}
+        onUpdateTicket={(updated) => {
+          setTickets(prev => prev.map(t => t.id === updated.id ? updated : t));
+          setTicketToDetail(updated);
+        }}
       />
     </div>
   );
