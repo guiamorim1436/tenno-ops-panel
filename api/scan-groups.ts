@@ -9,6 +9,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false }
 });
 
+export const maxDuration = 60;
+
 // Configuração OpenRouter
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash';
@@ -29,11 +31,17 @@ interface BufferMessage {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
   // Aceita GET (para cronjobs do Vercel) e POST (para acionamento manual no painel)
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
+  try {
     // 1. Carrega estritamente os grupos que possuem CLIENTE VINCULADO
     const { data: mappings, error: mapError } = await supabase
       .from('tenno_group_mappings')
@@ -301,7 +309,8 @@ Responda EXCLUSIVAMENTE em formato JSON com este schema:
               ],
               temperature: 0.1,
               response_format: { type: 'json_object' }
-            })
+            }),
+            signal: AbortSignal.timeout(9000)
           });
 
           if (response.ok) {

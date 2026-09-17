@@ -267,7 +267,18 @@ export function App() {
     setScanFeedback(null);
     try {
       const res = await fetch('/api/scan-groups', { method: 'POST' });
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(text.slice(0, 100) || `Servidor retornou status ${res.status}`);
+      }
+
+      if (!res.ok) {
+        throw new Error(data.error || `Erro HTTP ${res.status}`);
+      }
+
       await fetchTicketsFromDb();
 
       if (data.tickets_created > 0) {
