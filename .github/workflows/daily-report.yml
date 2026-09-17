@@ -1,0 +1,15 @@
+name: TENNO Ops Daily Report WhatsApp
+
+on:
+  schedule:
+    # 20:30 UTC = 17:30 BRT (Segunda a Sexta) - 30 min antes do fim do expediente
+    - cron: '30 20 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  send-daily-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Daily Report
+        run: |
+          curl -s -X POST https://tenno-ops-panel.vercel.app/api/daily-report

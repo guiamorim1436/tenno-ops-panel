@@ -2,11 +2,8 @@
   "crons": [
     {
       "path": "/api/scan-groups",
-      "schedule": "0 * * * *"
-    },
-    {
-      "path": "/api/daily-report",
-      "schedule": "30 20 * * 1-5"
+      "schedule": "0 12 * * *"
     }
   ]
 }
+
