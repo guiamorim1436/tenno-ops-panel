@@ -34,40 +34,105 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  try {
-    // 1. Busca mensagens pendentes de triagem no buffer
+    // 1. Carrega estritamente os grupos que possuem CLIENTE VINCULADO
+    const { data: mappings, error: mapError } = await supabase
+      .from('tenno_group_mappings')
+      .select('remote_jid, client_name, group_name')
+      .not('client_name', 'is', null)
+      .neq('client_name', '');
+
+    if (mapError) {
+      console.error('Erro ao buscar mapeamentos de grupos:', mapError);
+    }
+
+    const { data: directClients } = await supabase
+      .from('tenno_clients')
+      .select('id, name, whatsapp_group_id')
+      .not('whatsapp_group_id', 'is', null)
+      .neq('whatsapp_group_id', '');
+
+    const clientMap = new Map<string, { client_name: string; group_name: string; client_id?: string }>();
+
+    mappings?.forEach(m => {
+      const cName = m.client_name?.trim();
+      if (cName && m.remote_jid) {
+        clientMap.set(m.remote_jid, {
+          client_name: cName,
+          group_name: m.group_name?.trim() || cName
+        });
+      }
+    });
+
+    directClients?.forEach(c => {
+      const cName = c.name?.trim();
+      if (cName && c.whatsapp_group_id && !clientMap.has(c.whatsapp_group_id)) {
+        clientMap.set(c.whatsapp_group_id, {
+          client_name: cName,
+          group_name: cName,
+          client_id: c.id
+        });
+      }
+    });
+
+    const allowedJids = Array.from(clientMap.keys());
+    if (allowedJids.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'Nenhum grupo vinculado a cliente encontrado no mapeamento.',
+        scanned_groups: 0,
+        tickets_created: 0
+      });
+    }
+
+    // 2. Busca mensagens pendentes no buffer
     const { data: rawMessages, error: fetchError } = await supabase
       .from('tenno_whatsapp_buffer')
       .select('*')
       .eq('processed', false)
       .eq('is_deleted', false)
       .order('created_at', { ascending: true })
-      .limit(250);
+      .limit(350);
 
     if (fetchError) {
       console.error('Erro ao buscar buffer do WhatsApp:', fetchError);
       return res.status(500).json({ error: fetchError.message });
     }
 
-    if (!rawMessages || rawMessages.length === 0) {
+    // Marca mensagens de grupos NÃO vinculados como processadas para não acumular lixo
+    const unmappedMessages = (rawMessages || []).filter(m => !clientMap.has(m.remote_jid));
+    if (unmappedMessages.length > 0) {
+      const unmappedIds = unmappedMessages.map(m => m.id);
+      await supabase
+        .from('tenno_whatsapp_buffer')
+        .update({
+          processed: true,
+          processed_at: new Date().toISOString()
+        })
+        .in('id', unmappedIds);
+    }
+
+    // Filtra exclusivamente as mensagens de clientes vinculados
+    const validPendingMessages = (rawMessages || []).filter(m => clientMap.has(m.remote_jid));
+
+    if (validPendingMessages.length === 0) {
       return res.status(200).json({
         success: true,
-        message: 'Nenhuma mensagem pendente no buffer para triagem.',
+        message: 'Nenhuma mensagem pendente de clientes vinculados para triagem.',
         scanned_groups: 0,
         tickets_created: 0
       });
     }
 
-    // 2. Agrupa mensagens por remote_jid (grupo ou chat)
-    const messagesByGroup = new Map<string, BufferMessage[]>();
-    for (const msg of rawMessages as BufferMessage[]) {
+    // 3. Agrupa as mensagens pendentes por remote_jid
+    const pendingByGroup = new Map<string, BufferMessage[]>();
+    for (const msg of validPendingMessages as BufferMessage[]) {
       if (!msg.message_text || msg.message_text.trim().length === 0) continue;
-      const list = messagesByGroup.get(msg.remote_jid) || [];
+      const list = pendingByGroup.get(msg.remote_jid) || [];
       list.push(msg);
-      messagesByGroup.set(msg.remote_jid, list);
+      pendingByGroup.set(msg.remote_jid, list);
     }
 
-    // 3. Carrega membros da equipe para associação automática
+    // 4. Carrega membros da equipe para associação automática
     const { data: teamMembers } = await supabase
       .from('tenno_team_members')
       .select('id, name, role');
@@ -75,38 +140,103 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const guilherme = teamMembers?.find(m => m.role === 'lider_tecnico');
     const caio = teamMembers?.find(m => m.role === 'assistente_operacional');
 
+    // 5. Carrega configurações de SLA para cálculo de deadline comercial útil
+    const { data: slaSettings } = await supabase
+      .from('tenno_sla_settings')
+      .select('*')
+      .limit(1)
+      .maybeSingle();
+
+    const urgentHours = slaSettings?.urgent_hours || 4;
+    const normalHours = slaSettings?.normal_hours || 24;
+    const lowHours = slaSettings?.low_hours || 72;
+    const startHour = slaSettings?.work_start_hour ?? 9;
+    const endHour = slaSettings?.work_end_hour ?? 18;
+
+    const calculateBusinessDeadline = (businessHours: number): string => {
+      const date = new Date();
+      let remaining = businessHours;
+
+      while (remaining > 0) {
+        const dow = date.getDay();
+        if (dow === 0) { // Domingo -> Segunda
+          date.setDate(date.getDate() + 1);
+          date.setHours(startHour, 0, 0, 0);
+          continue;
+        }
+        if (dow === 6) { // Sábado -> Segunda
+          date.setDate(date.getDate() + 2);
+          date.setHours(startHour, 0, 0, 0);
+          continue;
+        }
+
+        const curH = date.getHours() + date.getMinutes() / 60;
+        if (curH < startHour) {
+          date.setHours(startHour, 0, 0, 0);
+          continue;
+        }
+        if (curH >= endHour) {
+          date.setDate(date.getDate() + 1);
+          date.setHours(startHour, 0, 0, 0);
+          continue;
+        }
+
+        const leftToday = endHour - curH;
+        if (remaining <= leftToday) {
+          date.setTime(date.getTime() + remaining * 3600 * 1000);
+          remaining = 0;
+        } else {
+          remaining -= leftToday;
+          date.setDate(date.getDate() + 1);
+          date.setHours(startHour, 0, 0, 0);
+        }
+      }
+      return date.toISOString();
+    };
+
     let totalCreatedTickets = 0;
     const resultsSummary = [];
 
-    // 4. Processa cada grupo com a IA via OpenRouter
-    for (const [remoteJid, messages] of messagesByGroup.entries()) {
-      // Identifica cliente vinculado se existir
-      const { data: clientRow } = await supabase
-        .from('tenno_clients')
-        .select('id, name')
-        .eq('whatsapp_group_id', remoteJid)
-        .maybeSingle();
+    // 6. Processa cada grupo de cliente com contexto enriquecido (mínimo 5 mensagens)
+    for (const [remoteJid, pendingMsgs] of pendingByGroup.entries()) {
+      const clientInfo = clientMap.get(remoteJid);
+      if (!clientInfo) continue;
 
-      const groupLabel = clientRow?.name || messages[0]?.group_name || `Grupo (${remoteJid.slice(0, 14)}...)`;
+      const clientName = clientInfo.client_name;
+      const groupName = clientInfo.group_name;
+
+      // Busca as últimas 8 a 10 mensagens deste grupo no buffer (incluindo da equipe e já lidas)
+      // para fornecer contexto rico (pelo menos 5 mensagens) à IA
+      const { data: recentHistory } = await supabase
+        .from('tenno_whatsapp_buffer')
+        .select('*')
+        .eq('remote_jid', remoteJid)
+        .eq('is_deleted', false)
+        .order('message_timestamp', { ascending: false })
+        .limit(8);
+
+      // Coloca em ordem cronológica (mais antigas -> mais novas)
+      const contextList: BufferMessage[] = recentHistory && recentHistory.length > 0
+        ? ([...recentHistory].reverse() as BufferMessage[])
+        : pendingMsgs;
 
       // Monta o histórico cronológico de diálogo com autoria
-      const conversationBlock = messages
+      const conversationBlock = contextList
         .map(m => {
           const roleTag = m.is_from_me ? '[EQUIPE TENNO]' : '[CLIENTE]';
-          const author = m.sender_name || (m.is_from_me ? 'TENNO' : 'Cliente');
+          const author = m.sender_name || (m.is_from_me ? 'TENNO' : clientName);
           const editedTag = m.is_edited ? ' (editada)' : '';
           return `${roleTag} ${author}${editedTag}: ${m.message_text}`;
         })
         .join('\n');
 
-      // Se não tiver chave de OpenRouter configurada, fazemos fallback analítico de regras
       let aiResult: {
         has_pending_demands: boolean;
         reason?: string;
         demands?: Array<{
           title: string;
           description: string;
-          priority: 'normal' | 'urgente';
+          priority: 'baixa' | 'normal' | 'urgente';
           suggested_role: 'lider_tecnico' | 'assistente_operacional';
           is_followup?: boolean;
           pause_reason?: string;
@@ -118,19 +248,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (OPENROUTER_API_KEY) {
         try {
           const systemPrompt = `Você é o Agente de Triagem Operacional da TENNO Automações.
-A sua missão é analisar um bloco de mensagens de um grupo de suporte no WhatsApp e decidir se existe alguma DEMANDA PENDENTE ou ACOMPANHAMENTO que precisa de ação da equipe técnica/operacional.
+A sua missão é analisar um histórico recente de mensagens de um grupo de WhatsApp vinculado a um cliente e decidir se existe alguma DEMANDA PENDENTE ou ACOMPANHAMENTO que necessita de ação da equipe técnica/operacional.
 
 REGRAS OBRIGATÓRIAS:
-1. ANÁLISE DE RESOLUÇÃO: Se o cliente relatou uma dúvida, erro ou pedido, MAS alguém da [EQUIPE TENNO] (ou o próprio cliente) já respondeu, orientou ou resolveu na própria conversa, NÃO gere tarefa operacional! Marque has_pending_demands = false.
-2. CONVERSA SOCIAL: Bom dia, obrigado, valeu, áudios/mensagens de cortesia não são tarefas.
-3. DEMANDA PENDENTE: Gere tarefa se o cliente solicitou algo que AINDA NÃO FOI RESOLVIDO e exige que a equipe altere código, crie automação, resolva bug no Kommo/n8n/webhook, etc.
-4. TAREFA DE ACOMPANHAMENTO (FOLLOW-UP): Se a [EQUIPE TENNO] solicitou algo a um terceiro, gestor de tráfego ou cliente (ex: "me envia o acesso ao portfólio da Meta", "preciso do código que chegou no SMS", "aguardo aprovação"), e a conversa encerrou aguardando essa resposta do terceiro, ESSA TAREFA DEVE EXISTIR como acompanhamento!
+1. ANÁLISE DE RESOLUÇÃO: Se o cliente relatou uma dúvida, erro ou solicitação, MAS alguém da [EQUIPE TENNO] (ou o próprio cliente) já respondeu, orientou ou resolveu no histórico recente, NÃO gere tarefa operacional! Marque has_pending_demands = false.
+2. CONVERSA SOCIAL: Cumprimentos (bom dia, boa tarde), agradecimentos, reações ou mensagens de cortesia NÃO são tarefas.
+3. DEMANDA PENDENTE: Gere tarefa se houver um pedido que AINDA NÃO FOI RESOLVIDO e exige alteração de automação, n8n, Kommo, Webhook, banco de dados ou suporte técnico.
+4. PRIORIZAÇÃO REALISTA:
+   - "urgente": Apenas quando há parada total de operação, faturamento travado ou erro crítico com cliente perdendo leads.
+   - "normal": Solicitações padrão de ajustes, dúvidas técnicas ou melhorias normais.
+   - "baixa": Pequenas alterações estéticas, dúvidas secundárias ou tarefas sem urgência.
+5. TAREFA DE ACOMPANHAMENTO (FOLLOW-UP): Se a [EQUIPE TENNO] solicitou algo a um terceiro, gestor de tráfego ou ao próprio cliente (ex: envio de acesso ao portfólio Meta, código SMS, aprovação de fluxo), e o diálogo encerrou aguardando essa resposta do cliente/terceiro:
    - Defina is_followup: true
-   - title: "Acompanhar: [O que foi pedido]" (ex: "Acompanhar liberação de acesso ao portfólio Meta com gestor de tráfego")
+   - title: "Acompanhar: [O que foi solicitado]"
    - pause_category: "aguardando_cliente"
    - next_action_by: "cliente"
-   - pause_reason: "Aguardando envio de acesso/informação solicitada pela equipe"
-5. Responda EXCLUSIVAMENTE em formato JSON com este schema:
+   - pause_reason: "Aguardando retorno do cliente/terceiro"
+
+Responda EXCLUSIVAMENTE em formato JSON com este schema:
 {
   "has_pending_demands": boolean,
   "reason": "explicação curta da sua decisão",
@@ -138,7 +273,7 @@ REGRAS OBRIGATÓRIAS:
     {
       "title": "título curto, claro e acionável (máx 80 caracteres)",
       "description": "resumo do que foi pedido e o que precisa ser feito",
-      "priority": "normal" | "urgente",
+      "priority": "baixa" | "normal" | "urgente",
       "suggested_role": "lider_tecnico" | "assistente_operacional",
       "is_followup": boolean,
       "pause_reason": string | null,
@@ -148,7 +283,7 @@ REGRAS OBRIGATÓRIAS:
   ]
 }`;
 
-          const userPrompt = `CLIENTE/GRUPO: ${groupLabel}\n\nHISTÓRICO DO BLOCO RECENTE:\n${conversationBlock}\n\nAnalise o histórico e retorne apenas o JSON.`;
+          const userPrompt = `CLIENTE: ${clientName} (Grupo: ${groupName})\n\nHISTÓRICO RECENTE DAS MENSAGENS:\n${conversationBlock}\n\nAnalise o histórico e retorne apenas o JSON.`;
 
           const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
@@ -172,7 +307,6 @@ REGRAS OBRIGATÓRIAS:
           if (response.ok) {
             const aiData = await response.json();
             const textContent = aiData.choices?.[0]?.message?.content || '{}';
-            // Limpa possíveis blocos ```json se houver
             const cleanJson = textContent.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
             aiResult = JSON.parse(cleanJson);
           } else {
@@ -182,15 +316,13 @@ REGRAS OBRIGATÓRIAS:
           console.error('Erro ao consultar OpenRouter:', openRouterErr);
         }
       } else {
-        // Sem OPENROUTER_API_KEY: Fallback heurístico inteligente
-        // Se a última mensagem do bloco for da EQUIPE TENNO, assume que foi atendido
-        const lastMsg = messages[messages.length - 1];
+        // Fallback heurístico inteligente
+        const lastMsg = contextList[contextList.length - 1];
         const hasTeamReply = lastMsg.is_from_me;
         
         if (!hasTeamReply) {
-          // Verifica se há padrões de dúvida/erro
           const demandKeywords = [/erro/i, /bug/i, /n[ãa]o funciona/i, /parou/i, /preciso/i, /ajuste/i, /socorro/i];
-          const hasKeyword = messages.some(m => !m.is_from_me && demandKeywords.some(k => k.test(m.message_text || '')));
+          const hasKeyword = contextList.some(m => !m.is_from_me && demandKeywords.some(k => k.test(m.message_text || '')));
           
           if (hasKeyword) {
             aiResult = {
@@ -198,7 +330,7 @@ REGRAS OBRIGATÓRIAS:
               reason: 'Cliente enviou solicitação sem resposta imediata da equipe (modo heurístico)',
               demands: [
                 {
-                  title: `Demanda de suporte em ${groupLabel}`,
+                  title: `Demanda de suporte: ${clientName}`,
                   description: conversationBlock.slice(0, 400),
                   priority: 'normal',
                   suggested_role: 'assistente_operacional'
@@ -209,25 +341,28 @@ REGRAS OBRIGATÓRIAS:
         }
       }
 
-      // 5. Se a IA identificou demandas pendentes, cria os tickets
+      // 7. Se a IA identificou demandas pendentes, cria os tickets com o nome do cliente
       if (aiResult.has_pending_demands && aiResult.demands && aiResult.demands.length > 0) {
         for (const demand of aiResult.demands) {
           const assigneeId = demand.suggested_role === 'lider_tecnico' ? guilherme?.id : caio?.id;
-          const slaHours = demand.priority === 'urgente' ? 4 : 24;
+          const priority = demand.priority || 'normal';
+          const slaHours = priority === 'urgente' ? urgentHours : priority === 'baixa' ? lowHours : normalHours;
+          const deadlineIso = calculateBusinessDeadline(slaHours);
 
           const { error: ticketError } = await supabase
             .from('tenno_tickets')
             .insert({
               title: demand.title,
-              description: `${demand.description}\n\n--- Contexto extraído via WhatsApp na última janela ---\n${conversationBlock.slice(0, 800)}`,
-              client_id: clientRow?.id || null,
-              client_name: groupLabel,
+              description: `${demand.description}\n\n--- Contexto extraído via WhatsApp na última janela ---\n${conversationBlock.slice(0, 1000)}`,
+              client_id: clientInfo.client_id || null,
+              client_name: clientName,
               origin_whatsapp_group_id: remoteJid,
-              priority: demand.priority,
+              priority: priority,
               sla_hours_target: slaHours,
+              sla_deadline: deadlineIso,
               assignee_id: assigneeId || null,
               status: demand.is_followup ? 'paused' : 'pending_approval',
-              pause_reason: demand.is_followup ? (demand.pause_reason || 'Aguardando ação de terceiro/cliente') : null,
+              pause_reason: demand.is_followup ? (demand.pause_reason || 'Aguardando ação do cliente/terceiro') : null,
               pause_category: demand.is_followup ? (demand.pause_category || 'aguardando_cliente') : null,
               next_action_by: demand.is_followup ? (demand.next_action_by || 'cliente') : null,
               paused_at: demand.is_followup ? new Date().toISOString() : null
@@ -235,12 +370,14 @@ REGRAS OBRIGATÓRIAS:
 
           if (!ticketError) {
             totalCreatedTickets++;
+          } else {
+            console.error('Erro ao salvar ticket:', ticketError);
           }
         }
       }
 
-      // 6. Marca todas as mensagens deste grupo como processadas
-      const messageDbIds = messages.map(m => m.id);
+      // 8. Marca todas as mensagens pendentes deste grupo como processadas
+      const messageDbIds = pendingMsgs.map(m => m.id);
       await supabase
         .from('tenno_whatsapp_buffer')
         .update({
@@ -250,8 +387,9 @@ REGRAS OBRIGATÓRIAS:
         .in('id', messageDbIds);
 
       resultsSummary.push({
-        group: groupLabel,
-        messages_count: messages.length,
+        client: clientName,
+        group: groupName,
+        messages_analyzed: contextList.length,
         has_pending_demands: aiResult.has_pending_demands,
         reason: aiResult.reason,
         created_tickets: aiResult.demands?.length || 0
@@ -260,8 +398,8 @@ REGRAS OBRIGATÓRIAS:
 
     return res.status(200).json({
       success: true,
-      scanned_groups: messagesByGroup.size,
-      total_messages_processed: rawMessages.length,
+      scanned_groups: pendingByGroup.size,
+      total_messages_processed: validPendingMessages.length,
       tickets_created: totalCreatedTickets,
       openrouter_active: !!OPENROUTER_API_KEY,
       details: resultsSummary

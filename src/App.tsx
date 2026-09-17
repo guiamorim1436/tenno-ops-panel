@@ -174,8 +174,35 @@ export function App() {
     }
   };
 
+  // Carrega clientes vinculados para dropdown/autocomplete
+  const [clientOptions, setClientOptions] = useState<string[]>([]);
+
   useEffect(() => {
     fetchTicketsFromDb();
+
+    async function loadClientOptions() {
+      try {
+        const { data: mappings } = await supabase
+          .from('tenno_group_mappings')
+          .select('client_name')
+          .not('client_name', 'is', null)
+          .neq('client_name', '');
+
+        const { data: clients } = await supabase
+          .from('tenno_clients')
+          .select('name')
+          .not('name', 'is', null)
+          .neq('name', '');
+
+        const set = new Set<string>();
+        mappings?.forEach(m => m.client_name?.trim() && set.add(m.client_name.trim()));
+        clients?.forEach(c => c.name?.trim() && set.add(c.name.trim()));
+        setClientOptions(Array.from(set).sort((a, b) => a.localeCompare(b)));
+      } catch (err) {
+        console.warn('Erro ao carregar clientes para dropdown:', err);
+      }
+    }
+    loadClientOptions();
   }, []);
 
   // Disparo manual do scanner de WhatsApp com IA
@@ -220,17 +247,82 @@ export function App() {
     return `${m}m`;
   };
 
-  // Regra de SLA: Cálculo de data futura aproximada em horário útil
+  // Adiciona horas úteis comerciais (segunda a sexta, 09h às 18h)
+  const addBusinessHours = (startDate: Date, businessHours: number, startHour = 9, endHour = 18): Date => {
+    const date = new Date(startDate.getTime());
+    let remaining = businessHours;
+
+    while (remaining > 0) {
+      const dow = date.getDay();
+      if (dow === 0) { // Domingo -> Segunda
+        date.setDate(date.getDate() + 1);
+        date.setHours(startHour, 0, 0, 0);
+        continue;
+      }
+      if (dow === 6) { // Sábado -> Segunda
+        date.setDate(date.getDate() + 2);
+        date.setHours(startHour, 0, 0, 0);
+        continue;
+      }
+
+      const curH = date.getHours() + date.getMinutes() / 60;
+      if (curH < startHour) {
+        date.setHours(startHour, 0, 0, 0);
+        continue;
+      }
+      if (curH >= endHour) {
+        date.setDate(date.getDate() + 1);
+        date.setHours(startHour, 0, 0, 0);
+        continue;
+      }
+
+      const leftToday = endHour - curH;
+      if (remaining <= leftToday) {
+        date.setTime(date.getTime() + remaining * 3600 * 1000);
+        remaining = 0;
+      } else {
+        remaining -= leftToday;
+        date.setDate(date.getDate() + 1);
+        date.setHours(startHour, 0, 0, 0);
+      }
+    }
+    return date;
+  };
+
+  // Regra de SLA: Cálculo de data futura em horário comercial útil
   const calculateDeadline = (priority: TicketPriority) => {
     const hours = priority === 'urgente' ? 4 : priority === 'normal' ? 24 : 72;
-    const now = new Date();
-    // Adiciona as horas úteis projetadas
-    now.setHours(now.getHours() + hours);
+    const deadlineDate = addBusinessHours(new Date(), hours, 9, 18);
     return {
       hours,
-      deadlineIso: now.toISOString(),
-      formatted: now.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+      deadlineIso: deadlineDate.toISOString(),
+      formatted: deadlineDate.toLocaleDateString('pt-BR', {
+        weekday: 'short',
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
     };
+  };
+
+  // Formatação amigável do badge de SLA (evita parecer que vence no mesmo dia)
+  const formatSlaBadge = (deadlineIso?: string) => {
+    if (!deadlineIso) return null;
+    const d = new Date(deadlineIso);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+
+    if (isToday) {
+      return `Hoje ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    return d.toLocaleDateString('pt-BR', {
+      weekday: 'short',
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
   // 1. INICIAR TIMER (Mono-tarefa Obrigatória)
@@ -539,15 +631,74 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
     );
   }, [tickets, searchTerm]);
 
-  // Filtros de Colunas Estritamente Isolados
-  const pendingApprovalTickets = filteredTickets.filter(t => t.status === 'pending_approval');
-  const caioTickets = filteredTickets.filter(
-    t => t.assignee_id === '2' && t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected'
-  );
-  const guilhermeTickets = filteredTickets.filter(
-    t => t.assignee_id === '1' && t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected'
-  );
-  const completedTickets = filteredTickets.filter(t => t.status === 'completed' || t.status === 'rejected');
+  // Ordenação ágil da fila de execução:
+  // 1. in_progress (em execução agora) sempre no topo absoluto
+  // 2. Prioridade: urgente (peso 1) no topo da fila
+  // 3. Prioridade: normal (peso 2) e baixa (peso 3) vão para o final
+  // 4. Desempate: quem entrou antes / menor deadline
+  const sortQueueTickets = (ticketsList: Ticket[]) => {
+    const priorityWeight: Record<TicketPriority, number> = {
+      urgente: 1,
+      normal: 2,
+      baixa: 3
+    };
+
+    return [...ticketsList].sort((a, b) => {
+      // 1. Em andamento fica no topo absoluto para foco do operador
+      if (a.status === 'in_progress' && b.status !== 'in_progress') return -1;
+      if (b.status === 'in_progress' && a.status !== 'in_progress') return 1;
+
+      // 2. Urgente primeiro; Normal e Baixa estritamente no final
+      const weightA = priorityWeight[a.priority] || 2;
+      const weightB = priorityWeight[b.priority] || 2;
+      if (weightA !== weightB) {
+        return weightA - weightB;
+      }
+
+      // 3. Desempate: data de criação mais antiga primeiro
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return timeA - timeB;
+    });
+  };
+
+  // Filtros de Colunas Estritamente Isolados e Ordenados por Prioridade e Foco
+  const pendingApprovalTickets = useMemo(() => {
+    const list = filteredTickets.filter(t => t.status === 'pending_approval');
+    return [...list].sort((a, b) => {
+      const priorityWeight: Record<TicketPriority, number> = { urgente: 1, normal: 2, baixa: 3 };
+      const weightA = priorityWeight[a.priority] || 2;
+      const weightB = priorityWeight[b.priority] || 2;
+      if (weightA !== weightB) return weightA - weightB;
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return timeB - timeA;
+    });
+  }, [filteredTickets]);
+
+  const caioTickets = useMemo(() => {
+    const list = filteredTickets.filter(
+      t => t.assignee_id === '2' && t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected'
+    );
+    return sortQueueTickets(list);
+  }, [filteredTickets]);
+
+  const guilhermeTickets = useMemo(() => {
+    const list = filteredTickets.filter(
+      t => t.assignee_id === '1' && t.status !== 'pending_approval' && t.status !== 'completed' && t.status !== 'rejected'
+    );
+    return sortQueueTickets(list);
+  }, [filteredTickets]);
+
+  const completedTickets = useMemo(() => {
+    return filteredTickets
+      .filter(t => t.status === 'completed' || t.status === 'rejected')
+      .sort((a, b) => {
+        const timeA = a.completed_at ? new Date(a.completed_at).getTime() : 0;
+        const timeB = b.completed_at ? new Date(b.completed_at).getTime() : 0;
+        return timeB - timeA;
+      });
+  }, [filteredTickets]);
 
   // Telemetria Universal Multi-Cliente (Calculada dinamicamente para todos os clientes)
   const clientStats = useMemo(() => {
@@ -913,19 +1064,21 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                             </span>
                             <div className="flex items-center gap-1.5">
                               {ticket.sla_deadline && (
-                                <span className="text-[10px] text-slate-400 flex items-center gap-1 bg-slate-800/60 px-2 py-0.5 rounded">
+                                <span 
+                                  className="text-[10px] text-slate-400 flex items-center gap-1 bg-slate-800/60 px-2 py-0.5 rounded"
+                                  title={`Prazo útil projetado: ${new Date(ticket.sla_deadline).toLocaleString('pt-BR')}`}
+                                >
                                   <Clock className="w-3 h-3 text-amber-400" />
-                                  {new Date(ticket.sla_deadline).toLocaleTimeString('pt-BR', {
-                                    hour: '2-digit',
-                                    minute: '2-digit'
-                                  })}
+                                  {formatSlaBadge(ticket.sla_deadline)}
                                 </span>
                               )}
                               <span
                                 className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
                                   ticket.priority === 'urgente'
                                     ? 'bg-rose-500/20 text-rose-300'
-                                    : 'bg-amber-500/20 text-amber-300'
+                                    : ticket.priority === 'normal'
+                                    ? 'bg-amber-500/20 text-amber-300'
+                                    : 'bg-slate-800 text-slate-400'
                                 }`}
                               >
                                 {ticket.priority}
@@ -1091,15 +1244,28 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
                             <span className="text-xs font-mono text-slate-400 font-bold">
                               #{ticket.ticket_code}
                             </span>
-                            <span
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                                ticket.priority === 'urgente'
-                                  ? 'bg-rose-500/20 text-rose-300'
-                                  : 'bg-blue-500/20 text-blue-300'
-                              }`}
-                            >
-                              {ticket.priority}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              {ticket.sla_deadline && (
+                                <span 
+                                  className="text-[10px] text-slate-400 flex items-center gap-1 bg-slate-800/60 px-2 py-0.5 rounded"
+                                  title={`Prazo útil projetado: ${new Date(ticket.sla_deadline).toLocaleString('pt-BR')}`}
+                                >
+                                  <Clock className="w-3 h-3 text-amber-400" />
+                                  {formatSlaBadge(ticket.sla_deadline)}
+                                </span>
+                              )}
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                                  ticket.priority === 'urgente'
+                                    ? 'bg-rose-500/20 text-rose-300'
+                                    : ticket.priority === 'normal'
+                                    ? 'bg-blue-500/20 text-blue-300'
+                                    : 'bg-slate-800 text-slate-400'
+                                }`}
+                              >
+                                {ticket.priority}
+                              </span>
+                            </div>
                           </div>
 
                           <div>
@@ -1368,17 +1534,28 @@ Qualquer novidade ou atualização, avisaremos por aqui! 🚀`;
 
             <form onSubmit={handleCreateTask} className="space-y-4 text-xs">
               <div>
-                <label className="block text-slate-400 font-semibold mb-1">
-                  Cliente / Grupo de WhatsApp:
+                <label className="block text-slate-400 font-semibold mb-1 flex items-center justify-between">
+                  <span>Cliente / Grupo de WhatsApp:</span>
+                  {clientOptions.length > 0 && (
+                    <span className="text-[10px] text-emerald-400 font-normal">
+                      {clientOptions.length} clientes vinculados disponíveis
+                    </span>
+                  )}
                 </label>
                 <input
                   type="text"
+                  list="client-options-list"
                   value={newClient}
                   onChange={e => setNewClient(e.target.value)}
-                  placeholder="Ex: Nome da Empresa, Cliente Alpha..."
+                  placeholder="Selecione um cliente vinculado ou digite..."
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
                   required
                 />
+                <datalist id="client-options-list">
+                  {clientOptions.map((c, idx) => (
+                    <option key={idx} value={c} />
+                  ))}
+                </datalist>
               </div>
 
               <div>
